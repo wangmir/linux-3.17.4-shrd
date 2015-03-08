@@ -2023,10 +2023,20 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 			}
 		}
 
-		for(i = 0; i < blk_rq_sectors(prq) / SHRD_SECTORS_PER_PAGE; i++)[
-			header->o_addr[idx] = blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE
+		for(i = 0; i < blk_rq_sectors(prq) / SHRD_SECTORS_PER_PAGE; i++){
+			header->o_addr[idx] = blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE + i;
+			idx++;
+			if(idx >= sectors){
+				printk("WARNING:: idx >= sectors at scsi_shrd_packing_rw_twrite\n");
+			}
 		}
 	}
+
+	if(idx != sectors)
+		printk("WARNING:: idx >= sectors at scsi_shrd_packing_rw_twrite\n");
+
+	//1. need to map twrite header into scsi_cmd
+	//2. need to map sg list for the request's' into single scsi_cmd.
 	
 }
 
