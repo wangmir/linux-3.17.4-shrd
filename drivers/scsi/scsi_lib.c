@@ -1981,7 +1981,20 @@ no_pack:
 	return NULL;
 }
 
+/*
+	Send scsi_cmd with no struct request(if available).
+*/
+static int scsi_shrd_send_cmd_with_no_req(struct scsi_device *sdev, struct scsi_cmnd *cmd){
+		
+}
 
+
+/*
+	Make twrite command with header data.
+*/
+static struct scsi_cmnd *scsi_shrd_make_twrite_cmd(struct SHRD_TWRITE *twrite_entry){
+
+}
 
 /*
 	Packing twrite data with request list in twrite_entry
@@ -2025,7 +2038,13 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 
 		for(i = 0; i < blk_rq_sectors(prq) / SHRD_SECTORS_PER_PAGE; i++){
 			header->o_addr[idx] = blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE + i;
+			
+			shrd->shrd_rw_map[header->t_addr_start + idx].t_addr = header->t_addr_start + idx;
+			shrd->shrd_rw_map[header->t_addr_start + idx].o_addr = header->o_addr[idx];
+			scsi_shrd_map_insert(shrd->rw_mapping, shrd->shrd_rw_map[header->t_addr_start + idx]);
+
 			idx++;
+			
 			if(idx >= sectors){
 				printk("WARNING:: idx >= sectors at scsi_shrd_packing_rw_twrite\n");
 			}

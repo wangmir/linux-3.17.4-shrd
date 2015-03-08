@@ -1001,6 +1001,8 @@ static int sd_setup_read_write_cmnd(struct scsi_cmnd *SCpnt)
 			this_count = this_count >> 3;
 		}
 	}
+
+	//indicate write or read, necessary for shrd handle too.
 	if (rq_data_dir(rq) == WRITE) {
 		SCpnt->cmnd[0] = WRITE_6;
 
