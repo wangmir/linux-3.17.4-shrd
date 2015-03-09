@@ -1722,7 +1722,7 @@ static unsigned int ata_scsi_rw_xlat(struct ata_queued_cmd *qc)
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 	//test for whether address is changed properly or not
-	printk("the I/O address is %llu\n", block);
+	//printk("the I/O address is %llu\n", block);
 #endif
 
 	rc = ata_build_rw_tf(&qc->tf, qc->dev, block, n_block, tf_flags,

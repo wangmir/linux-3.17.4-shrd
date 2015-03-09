@@ -1981,18 +1981,49 @@ no_pack:
 	return NULL;
 }
 
+static void scsi_shrd_done(struct scsi_cmnd *cmd){
+
+	//if cmd is for the twrite header
+
+	// if cmd is for the twrite data
+
+	//if cmd is for the remap cmd
+
+	//if cmd is for the sp read
+}
+
 /*
 	Send scsi_cmd with no struct request(if available).
 */
-static int scsi_shrd_send_cmd_with_no_req(struct scsi_device *sdev, struct scsi_cmnd *cmd){
-		
+static int scsi_shrd_send_cmd_with_no_req(struct request_queue *q, struct scsi_device *sdev, struct scsi_cmnd *cmd){
+
+	//TODO: need to check whether we need to confirm the NCQ availability. (or before packing twrite)
+	int rtn;
+
+	
+	
+	scsi_init_cmd_errh(cmd);
+
+	cmd->scsi_done = scsi_shrd_done;
+
+	rtn = scsi_dispatch_cmd(cmd);
+
+	if(rtn){
+		printk("WARNING:: scsi_shrd_send_cmd_with_no_req error on scsi_dispatch_cmd\n");
+	}
 }
 
+/*
+	Make twrite command with request data.
+*/
+static struct scsi_cmnd *scsi_shrd_make_twrite_data_cmd(struct SHRD_TWRITE *twrite_entry){
+	
+}
 
 /*
 	Make twrite command with header data.
 */
-static struct scsi_cmnd *scsi_shrd_make_twrite_cmd(struct SHRD_TWRITE *twrite_entry){
+static struct scsi_cmnd *scsi_shrd_make_twrite_header_cmd(struct SHRD_TWRITE *twrite_entry){
 
 }
 
