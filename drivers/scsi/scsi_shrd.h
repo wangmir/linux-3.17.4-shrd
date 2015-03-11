@@ -46,7 +46,7 @@ struct SHRD_TWRITE_HEADER{
 struct SHRD_TWRITE{
 	struct list_head twrite_cmd_list;  //is used for ongoing list and free cmd list
 	struct list_head req_list; //'struct request' entries from twrite data will be listed from here.
-	struct SHRD_TWRITE_HEADER twrite_hdr;
+	struct SHRD_TWRITE_HEADER *twrite_hdr;
 	u32 blocks;
 	u8 nr_entries;
 	u8 in_use; 
@@ -60,7 +60,7 @@ struct SHRD_TWRITE{
 	This structure will be array with two 4KB entry.
 	Each remap header is for each FTL core.
 */
-struct SHRD_REMAP_DATA{
+struct SHRD_REMAP_DATA{
 	u32 t_addr_start;
 	u32 remap_count;
 	u32 t_addr[511];
@@ -69,7 +69,7 @@ struct SHRD_REMAP_DATA{
 
 struct SHRD_REMAP{
 	struct list_head remap_cmd_list; //is used for ongoing list and free cmd list
-	struct SHRD_REMAP_DATA remap_data;
+	struct SHRD_REMAP_DATA *remap_data;
 	u8 in_use;
 };
 

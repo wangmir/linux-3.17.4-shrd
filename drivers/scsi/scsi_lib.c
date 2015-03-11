@@ -1760,6 +1760,13 @@ static u32 scsi_shrd_init(struct request_queue *q){
 		goto fin;
 	}
 
+	for(idx = 0; idx < SHRD_TWRITE_ENTRIES; idx++){
+		sdev->shrd->twrite_cmd[idx].twrite_hdr = (struct SHRD_TWRITE_HEADER *) alloc_pages(GFP_KERNEL, 0);
+		if(sdev->shrd->twrite_cmd[idx].twrite_hdr == NULL){
+			printk("SHRD:: alloc failed during 4KB twrite header, what should i do?\n");
+		}
+	}
+
 	sdev->shrd->remap_cmd = (struct SHRD_REMAP *)kmalloc(sizeof(struct SHRD_REMAP) * SHRD_REMAP_ENTRIES);
 	if(sdev->shrd->remap_cmd == NULL){
 		rtn = 1;
@@ -1769,6 +1776,13 @@ static u32 scsi_shrd_init(struct request_queue *q){
 		kfree(sdev->twrite_cmd);
 		printk("SHRD::kmalloc failed on sdev->shrd->remap_cmd\n");
 		goto fin;
+	}
+
+	for(idx = 0; idx < SHRD_REMAP_ENTRIES; idx++){
+		sdev->shrd->remap_cmd[idx].remap_data = (struct SHRD_REMAP_DATA *) alloc_pages(GFP_KERNEL, 0);
+		if(sdev->shrd->remap_cmd[idx].remap_data == NULL){
+			printk("SHRD:: alloc failed during 4KB remap data, what should i do?\n");
+		}
 	}
 	
 	// init spin_lock structure for log idx lock.
@@ -2014,17 +2028,57 @@ static int scsi_shrd_send_cmd_with_no_req(struct request_queue *q, struct scsi_d
 /*
 	Make twrite command with request data.
 */
-static struct scsi_cmnd *scsi_shrd_make_twrite_data_cmd(struct SHRD_TWRITE *twrite_entry){
+static int scsi_shrd_make_twrite_data_cmd(struct SHRD_TWRITE *twrite_entry,  struct scsi_cmnd *cmd){
+
+	struct request *prq;
+	u32 sg_len = 0;
+	u32 start_addr = twrite_entry->twrite_hdr->t_addr_start;
+	u32 idx = start_addr;
+	struct scatterlist *sg, *__sg;
+
+	//fix 128 into the # of segments.
+	if(unlikely(scsi_alloc_sgtable(&cmd.sdb, 128, GFP_ATOMIC, 0)))
+		return -1;
+
+	sg = cmd->sdb.table.sgl;
+	__sg = sg;
+
+	//ON_GOING CODE
+
+	//need to consider padding.
+	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
+
+		if(idx & 0x1 != (blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1){
+			sg_set_buf(__sg, twrite_entry->twrite_hdr, PAGE_SIZE); //just fill dummy data (to reduce the memory consume, reuse header buf)
+			(__sg++)->page_link &= ~0x02;
+			sg_len++;
+		}
+		
+		sg_len += blk_rq_map_sg(prq->q, prq, __sg);
+		__sg = sg + (sg_len - 1);
+		(__sg++)->page_link &= ~0x02;
+		sg_len++;
+	}
+	sg_mark_end(sg + (sg_len - 1));
 	
 }
 
 /*
 	Make twrite command with header data.
 */
-static struct scsi_cmnd *scsi_shrd_make_twrite_header_cmd(struct SHRD_TWRITE *twrite_entry){
+static int scsi_shrd_make_twrite_header_cmd(struct SHRD_TWRITE *twrite_entry, struct scsi_cmnd *cmd){
 
 	
+	memset(twrite_entry->twrite_hdr, 0x00, PAGE_SIZE);
 
+	if(unlikely(scsi_alloc_sgtable(&cmd->sdb, 1, GFP_ATOMIC, 0)))
+		return -1;
+
+	sg_set_page(&cmd->sdb.table.sgl, (struct page *)twrite_entry->twrite_hdr, PAGE_SIZE, 0);
+	cmd->sdb.table.nents = 1;
+	cmd->sdb.length = PAGE_SIZE;
+
+	return 0;
 }
 
 /*
