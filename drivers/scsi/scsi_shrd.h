@@ -48,6 +48,7 @@ struct SHRD_TWRITE{
 	struct list_head req_list; //'struct request' entries from twrite data will be listed from here.
 	struct SHRD_TWRITE_HEADER *twrite_hdr;
 	u32 blocks;
+	u32 phys_segments;
 	u8 nr_entries;
 	u8 in_use; 
 };
