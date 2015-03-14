@@ -1876,6 +1876,7 @@ static SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct req
 	u8 reqs = 0;
 	u8 max_packed_rw = 0;
 	u32 req_sectors = 0;
+	u32 phys_segments = 0;
 	u32 log_addr;
 	int ret;
 
@@ -1890,9 +1891,23 @@ static SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct req
 		goto no_pack;
 	if(blk_rq_sectors(rq) > SHRD_RW_THRESHOLD_IN_SECTOR)
 		goto no_pack;
-
+	
 	max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
 	req_sectors += blk_rq_sectors(cur);
+	phys_segments += cur->nr_phys_segments;
+
+	//need to consider padding
+	if(log_addr & 0x1 != (blk_rq_pos(cur) / SHRD_SECTORS_PER_PAGE) & 0x1){
+		//not aligned, need to pad
+		if(req_sectors + 1 > max_packed_rw){
+			req_sectors -= blk_rq_sectors(cur);
+			break;
+		}
+		else{
+			req_sectors++;
+			phys_segments++;
+		}
+	}
 
 	//we need to get a address space for twrite (only for RW)
 	//if there are not enough space (512KB), we can choose from two options. 1) packing small size, 2) move to log start addr
@@ -1959,12 +1974,13 @@ static SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct req
 		//need to consider padding
 		if(log_addr & 0x1 != (blk_rq_pos(next) / SHRD_SECTORS_PER_PAGE) & 0x1){
 			//not aligned, need to pad
-			if(req_sectors + 1 > SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR){
+			if(req_sectors + 1 > max_packed_rw){
 				req_sectors -= blk_rq_sectors(next);
 				break;
 			}
 			else{
 				req_sectors++;
+				phys_segments++;
 			}
 		}
 
@@ -1984,6 +2000,7 @@ static SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct req
 		list_add(&rq->queuelist, &twrite_entry->req_list);
 		twrite_entry->nr_entries = ++reqs;
 		twrite_entry->blocks = req_sectors;
+		twrite_entry->phys_segments = phys_segments;
 	}
 	else
 		goto no_pack;
@@ -2036,9 +2053,10 @@ static int scsi_shrd_make_twrite_data_cmd(struct SHRD_TWRITE *twrite_entry,  str
 	u32 idx = start_addr;
 	struct scatterlist *sg, *__sg;
 
-	//fix 128 into the # of segments.
-	if(unlikely(scsi_alloc_sgtable(&cmd.sdb, 128, GFP_ATOMIC, 0)))
+	if(unlikely(scsi_alloc_sgtable(&cmd.sdb, twrite_entry->phys_segments, GFP_ATOMIC, 0))){
+		printk("SHRD::WARNING, scsi_alloc_sgtable() fail on scsi_shrd_make_twrite_data_cmd\n");
 		return -1;
+	}
 
 	sg = cmd->sdb.table.sgl;
 	__sg = sg;
