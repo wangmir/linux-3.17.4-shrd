@@ -1694,8 +1694,14 @@ static int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry
 			new = &((*new)->rb_left);
 		else if (result > 0)
 			new = &((*new)->rb_right);
-		else
-			return FALSE;
+		else{
+			//it means overwrite for the corresponding o_addr, so delete old map, invalid it, and insert new map.
+			rb_erase(&this->node, root);
+			memset(this, 0x00, sizeof(SHRD_MAP));
+			scsi_shrd_map_insert(root, map_entry);
+			
+			return TRUE;
+		}
 	}
 
 	rb_link_node(&map_entry->node, parent, new);
@@ -1714,8 +1720,6 @@ static void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree){
 		memset(map_entry, 0x00, sizeof(SHRD_MAP));
 	}
 }
-
-
 
 static u32 scsi_shrd_init(struct request_queue *q){
 
@@ -1796,7 +1800,7 @@ static u32 scsi_shrd_init(struct request_queue *q){
 	//in here.
 	spin_lock_irq(sdev->shrd->rw_log_lock);
 	INIT_LIST_HEAD(&sdev->shrd->free_twrite_cmd_list);
-	INIT_LIST_HEAD(&sdev->shrd->ongoing_twrite_cmd_list);
+	INIT_LIST_HEAD(&sdev->shrd->todo_twrite_cmd_list);
 
 	for(idx= 0; idx < SHRD_TWRITE_ENTRIES; idx++){
 		INIT_LIST_HEAD(&sdev->shrd->twrite_cmd[idx].req_list);
@@ -1806,7 +1810,7 @@ static u32 scsi_shrd_init(struct request_queue *q){
 
 	spin_lock_irq(sdev->shrd->jn_log_lock);
 	INIT_LIST_HEAD(&sdev->shrd->free_remap_cmd_list);
-	INIT_LIST_HEAD(&sdev->shrd->ongoing_remap_cmd_list);
+	INIT_LIST_HEAD(&sdev->shrd->todo_remap_cmd_list);
 
 	for(idx=0; idx<SHRD_REMAP_ENTRIES; idx++){
 		list_add_tail(&sdev->shrd->remap_cmd[idx].remap_cmd_list, &sdev->shrd->free_remap_cmd_list);
@@ -2105,6 +2109,7 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 	struct request *header_rq, *prq;
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
+	struct scsi_cmnd *cmd;
 	SHRD_TWRITE_HEADER *header = twrite_entry->twrite_hdr;
 	int idx = 0, sectors = twrite_entry->blocks;;
 		
@@ -2142,6 +2147,7 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 			
 			shrd->shrd_rw_map[header->t_addr_start + idx].t_addr = header->t_addr_start + idx;
 			shrd->shrd_rw_map[header->t_addr_start + idx].o_addr = header->o_addr[idx];
+			shrd->shrd_rw_map[header->t_addr_start + idx].valid = SHRD_VALID_MAP;
 			scsi_shrd_map_insert(shrd->rw_mapping, shrd->shrd_rw_map[header->t_addr_start + idx]);
 
 			idx++;
@@ -2208,7 +2214,13 @@ static void scsi_request_fn(struct request_queue *q)
 				//need to make prep function for twrite 
 				//(packing plural write requests into one twrite command and one write command)
 				scsi_shrd_packing_rw_twrite(q, req, twrite_entry);
+				cmd->twrite_entry_ptr = twrite_entry;
 				spin_unlock_irq(sdev->shrd->rw_log_lock);
+
+				
+				
+				//we need to finish handling of SHRD on here (because rest of code in this function is for the non-packed request
+				return ;
 			}
 			else {
 				//generic prep procedure (for non_twrite request)

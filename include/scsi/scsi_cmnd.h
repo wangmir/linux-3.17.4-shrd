@@ -105,6 +105,10 @@ struct scsi_cmnd {
 	struct request *request;	/* The command we are
 				   	   working on */
 
+#ifdef CONFIG_SCSI_SHRD_TEST0
+	struct SHRD_TWRITE *twrite_entry_ptr;
+#endif
+
 #define SCSI_SENSE_BUFFERSIZE 	96
 	unsigned char *sense_buffer;
 				/* obtained by REQUEST SENSE when

@@ -27,10 +27,17 @@
 
 #define SHRD_INVALID_LPN 0x7fffffff
 
+enum SHRD_MAP_FLAG {
+	SHRD_INVALID_MAP,
+	SHRD_VALID_MAP,
+	SHRD_REMAPPING_MAP, //when the read request is arrived, the corresponding data is in remapping state, then 1) send o_addr read, 2) wait (what is correct?)
+};
+
 struct SHRD_MAP {
 	struct rb_node node;
 	u32 o_addr;
 	u32 t_addr; //taddr is actually same as the array offset of each map e.g. shrd_rw_map[i] == shrd_rw_map[i].t_addr;
+	u8 valid;
 };
 
 /*
@@ -90,9 +97,7 @@ struct SHRD{
 
 	//these lists are used for finding free cmd entries and complete ongoing cmd entries.
 	struct list_head free_twrite_cmd_list;
-	struct list_head ongoing_twrite_cmd_list;
 	struct list_head free_remap_cmd_list;
-	struct list_head ongoing_remap_cmd_list;
 
 	//for each index indicator for write and remap, should acquire lock to handle each entries.
 	u32 rw_log_start_idx;
