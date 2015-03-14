@@ -2060,9 +2060,7 @@ static int scsi_shrd_make_twrite_data_cmd(struct SHRD_TWRITE *twrite_entry,  str
 
 	sg = cmd->sdb.table.sgl;
 	__sg = sg;
-
-	//ON_GOING CODE
-		
+	
 	//need to consider padding.
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
 
