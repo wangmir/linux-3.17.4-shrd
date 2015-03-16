@@ -86,6 +86,7 @@ struct scsi_cmnd {
 	enum dma_data_direction sc_data_direction;
 
 	/* These elements define the operation we are about to perform */
+
 	unsigned char *cmnd;
 
 
@@ -107,6 +108,7 @@ struct scsi_cmnd {
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 	struct SHRD_TWRITE *twrite_entry_ptr;
+	unsigned char __cmnd[BLK_MAX_CDB]; //__cmnd is for the twrite header or remap data (it means that has no request structure.)
 #endif
 
 #define SCSI_SENSE_BUFFERSIZE 	96
