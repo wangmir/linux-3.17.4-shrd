@@ -2180,9 +2180,10 @@ static int scsi_shrd_send_twrite_data_cmd(struct request_queue *q, struct SHRD_T
 	struct request *prq;
 	int rtn;
 
-	if(!scsi_target_queue_ready(shost, sdev))
-		goto not_ready;
-
+	if(!scsi_dev_queue_ready(q, sdev)){ // in the scs_dev_queue_ready function, device_busy is set (atomic_inc)
+		printk("SHRD:: dev queue is currently un-available at scsi_shrd_send_twrite_header_cmd\n");
+		return 1;
+	}
 	
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
 		if(!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
@@ -2211,7 +2212,7 @@ static int scsi_shrd_send_twrite_data_cmd(struct request_queue *q, struct SHRD_T
 		printk("SHRD: ERROR!! scsi_dispatch_cmd failed on scsi_shrd_send_twrite_data_cmd, and we currently don't consider scsi_queue_insert\n");
 		goto out_delay;
 	}
-
+	spin_lock_irq(q->queue_lock);
 	return 0;
 
 host_not_ready:
@@ -2226,7 +2227,7 @@ not_ready:
 out_delay:
 	if (!atomic_read(&sdev->device_busy) && !scsi_device_blocked(sdev))
 		blk_delay_queue(q, SCSI_QUEUE_DELAY);
-	return -1;
+	return 1;
 }
 
 static int scsi_shrd_send_twrite_header_cmd(struct request_queue *q, struct SHRD_TWRITE *twrite_entry, struct scsi_cmnd *cmd){
@@ -2237,7 +2238,7 @@ static int scsi_shrd_send_twrite_header_cmd(struct request_queue *q, struct SHRD
 
 	if(!scsi_dev_queue_ready(q, sdev)){ // in the scs_dev_queue_ready function, device_busy is set (atomic_inc)
 		printk("SHRD:: dev queue is currently un-available at scsi_shrd_send_twrite_header_cmd\n");
-		return -1;
+		return 1;
 	}
 	
 	if(!scsi_target_queue_ready(shost, sdev))
@@ -2268,7 +2269,7 @@ not_ready:
 out_delay:
 	if (!atomic_read(&sdev->device_busy) && !scsi_device_blocked(sdev))
 		blk_delay_queue(q, SCSI_QUEUE_DELAY);
-	return -1;
+	return 1;
 }
 
 
@@ -2357,7 +2358,6 @@ static void scsi_request_fn(struct request_queue *q)
 	//before handle new request, we need to check there are remained twrite header, data or remap command.
 	//if exists, than handle it first.
 #endif
-
 	
 	for (;;) {
 		int rtn;
@@ -2388,9 +2388,18 @@ static void scsi_request_fn(struct request_queue *q)
 
 				rtn = scsi_shrd_send_twrite_header_cmd(q, twrite_entry, headercmd);
 
+				if(rtn){
+					sdev->shrd->remained_twrite_header_cmd = headercmd;
+					spin_unlock_irq(sdev->shrd->rw_log_lock);
+					return;
+				}
+
 				scsi_shrd_make_twrite_data_cmd(q, twrite_entry, cmd);
 
 				rtn =scsi_shrd_send_twrite_data_cmd(q, twrite_entry, cmd);
+
+				if(rtn)
+					sdev->shrd->remained_twrite_data_cmd = cmd;
 				
 				spin_unlock_irq(sdev->shrd->rw_log_lock);
 				
