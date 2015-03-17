@@ -3,8 +3,9 @@
 
 #include <linux/list.h>
 
-
 #ifdef CONFIG_SCSI_SHRD_TEST0
+
+#define SHRD_NUM_CORES 2 //Samsung RSP SSD specific design, 
 
 #define SHRD_SECTORS_PER_PAGE 8
 
@@ -19,11 +20,22 @@
 #define SHRD_JN_LOG_SIZE_IN_MB 128
 #define SHRD_JN_LOG_SIZE_IN_PAGE (SHRD_JN_LOG_SIZE_IN_MB * 256)
 
+//110 * 1024 * 256 - SHRD_JN_LOG_SIZE_IN_PAGE - SHRD_RW_LOG_SIZE_IN_PAGE
+#define SHRD_TOTAL_LPN (110 * 1024 * 256)
+#define SHRD_LOG_START_IN_PAGE (SHRD_TOTAL_LPN - SHRD_RW_LOG_SIZE_IN_PAGE - SHRD_JN_LOG_SIZE_IN_PAGE)
+#define SHRD_RW_LOG_START_IN_PAGE SHRD_JN_LOG_START_IN_PAGE + SHRD_JN_LOG_SIZE_IN_PAGE
+#define SHRD_JN_LOG_START_IN_PAGE SHRD_LOG_START_IN_PAGE
+
+#define SHRD_CMD_START_IN_PAGE SHRD_TOTAL_LPN
+#define SHRD_TWRITE_CMD_START_IN_PAGE SHRD_CMD_START_IN_PAGE
+#define SHRD_REMAP_CMD_START_IN_PAGE (SHRD_CMD_START_IN_PAGE + 32 * NUM_CORES) //# of ncq * 2 (2 cores)
+#define SHRD_COMFRIM_RD_CMD_IN_PAGE (SHRD_REMAP_CMD_START_IN_PAGE + 32 * NUM_CORES)
+
 #define SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE 64
 
 #define SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR 1024
 #define SHRD_NUM_MAX_TWRITE_ENTRY 128
-#define SHRD_NUM_MAX_REMAP_ENTRY 511
+#define SHRD_NUM_MAX_REMAP_ENTRY 510
 
 #define SHRD_INVALID_LPN 0x7fffffff
 
@@ -47,7 +59,7 @@ struct SHRD_MAP {
 struct SHRD_TWRITE_HEADER{
 	u32 t_addr_start; 		//indicate WAL log start page addr
 	u32 io_count; 		//indicate how many writes (page) will be requested
-	u32 o_addr[128]; 		//o_addr (or h_addr) for each page (1<<32: padding, 1<<31: invalid(like journal header or journal commit))
+	u32 o_addr[SHRD_NUM_MAX_TWRITE_ENTRY]; 		//o_addr (or h_addr) for each page (1<<32: padding, 1<<31: invalid(like journal header or journal commit))
 };
 
 struct SHRD_TWRITE{
@@ -56,8 +68,9 @@ struct SHRD_TWRITE{
 	struct SHRD_TWRITE_HEADER *twrite_hdr;
 	u32 blocks;
 	u32 phys_segments;
-	u8 nr_entries;
+	u8 nr_requests;
 	u8 in_use; 
+	u8 entry_num;
 };
 /*
 	WARNING:: we need to modify TWRITE_HEADER and REMAP_DATA as buddy page rather than kmalloc memory.
@@ -71,14 +84,15 @@ struct SHRD_TWRITE{
 struct SHRD_REMAP_DATA{
 	u32 t_addr_start;
 	u32 remap_count;
-	u32 t_addr[511];
-	u32 o_addr[511];
+	u32 t_addr[SHRD_NUM_MAX_REMAP_ENTRY];
+	u32 o_addr[SHRD_NUM_MAX_REMAP_ENTRY];
 };
 
 struct SHRD_REMAP{
 	struct list_head remap_cmd_list; //is used for ongoing list and free cmd list
 	struct SHRD_REMAP_DATA *remap_data;
 	u8 in_use;
+	u8 entry_num;
 };
 
 struct SHRD{	
@@ -142,7 +156,7 @@ static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 	LIST_HEAD_INIT(&entry->req_list);
 	entry->twrite_cmd_list = NULL;
 	entry->blocks = 0;
-	entry->nr_entries = 0;
+	entry->nr_requests = 0;
 	entry->in_use = 0;
 
 }

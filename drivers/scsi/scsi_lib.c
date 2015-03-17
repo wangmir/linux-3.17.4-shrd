@@ -1804,6 +1804,7 @@ static u32 scsi_shrd_init(struct request_queue *q){
 
 	for(idx= 0; idx < SHRD_TWRITE_ENTRIES; idx++){
 		INIT_LIST_HEAD(&sdev->shrd->twrite_cmd[idx].req_list);
+		sdev->shrd->twrite_cmd[idx].entry_num = idx;
 		list_add_tail(&sdev->shrd->twrite_cmd[idx].twrite_cmd_list, &sdev->shrd->free_twrite_cmd_list);
 	}
 	spin_unlock_irq(sdev->shrd->rw_log_lock);
@@ -1813,6 +1814,7 @@ static u32 scsi_shrd_init(struct request_queue *q){
 	INIT_LIST_HEAD(&sdev->shrd->todo_remap_cmd_list);
 
 	for(idx=0; idx<SHRD_REMAP_ENTRIES; idx++){
+		sdev->shrd->remap_cmd[idx].entry_num = idx;
 		list_add_tail(&sdev->shrd->remap_cmd[idx].remap_cmd_list, &sdev->shrd->free_remap_cmd_list);
 	}
 	spin_unlock_irq(sdev->shrd->jn_log_lock);
@@ -2002,7 +2004,7 @@ static SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct req
 
 	if(reqs > 0){
 		list_add(&rq->queuelist, &twrite_entry->req_list);
-		twrite_entry->nr_entries = ++reqs;
+		twrite_entry->nr_requests = ++reqs;
 		twrite_entry->blocks = req_sectors;
 		twrite_entry->phys_segments = phys_segments;
 	}
@@ -2051,6 +2053,8 @@ static int scsi_shrd_setup_cmnd(struct scsi_cmnd *SCpnt, sector_t block, sector_
 	struct scsi_device *sdp = SCpnt->device;
 	int ret = BLKPREP_KILL;
 	SCpnt->cmnd = SCpnt->__cmnd;
+
+	memset(cmd->cmnd, 0x00, BLK_MAX_CDB);
 
 	//ON_GOGING CODE
 	
@@ -2101,8 +2105,6 @@ static int scsi_shrd_make_twrite_data_cmd(struct request_queue q, struct SHRD_TW
 	u32 idx = start_addr;
 	struct scatterlist *sg, *__sg;
 
-	
-
 	if(unlikely(scsi_alloc_sgtable(&cmd.sdb, twrite_entry->phys_segments, GFP_ATOMIC, 0))){
 		printk("SHRD::WARNING, scsi_alloc_sgtable() fail on scsi_shrd_make_twrite_data_cmd\n");
 		return -1;
@@ -2123,9 +2125,18 @@ static int scsi_shrd_make_twrite_data_cmd(struct request_queue q, struct SHRD_TW
 		sg_len += blk_rq_map_sg(prq->q, prq, __sg);
 		__sg = sg + (sg_len - 1);
 		(__sg++)->page_link &= ~0x02;
-		sg_len++;
 	}
 	sg_mark_end(sg + (sg_len - 1));
+
+	cmd->sdb.table.nents = sg_len;
+	cmd->sdb.length = twrite_entry->blocks << 9;
+	
+	cmd->twrite_entry_ptr = twrite_entry;
+
+	cmd->prot_op = SCSI_PROT_NORMAL;
+	cmd->sc_data_direction = DMA_TO_DEVICE;
+
+	scsi_shrd_setup_cmnd(cmd, twrite_entry->twrite_hdr->t_addr_start << 9, twrite_entry->blocks << 9, WRITE);
 	
 }
 
@@ -2135,6 +2146,8 @@ static int scsi_shrd_make_twrite_data_cmd(struct request_queue q, struct SHRD_TW
 static int scsi_shrd_make_twrite_header_cmd(struct request_queue q, struct SHRD_TWRITE *twrite_entry, struct scsi_cmnd *cmd){
 
 	struct scsi_device *sdev = q->queuedata;
+	int i =0; 
+	struct scatterlist *sg;
 	memset(twrite_entry->twrite_hdr, 0x00, PAGE_SIZE);
 
 	if(!get_device(&sdev->sdev_gendev))
@@ -2147,22 +2160,32 @@ static int scsi_shrd_make_twrite_header_cmd(struct request_queue q, struct SHRD_
 		return -1;
 	}
 
+	if(unlikely(scsi_alloc_sgtable(&cmd->sdb, SHRD_NUM_CORES, GFP_ATOMIC, 0)))
+		return -1;
+	
+	sg = &cmd->sdb.table.sgl;
+	sg_init_table(sg, SHRD_NUM_CORES);
+	
+	for(i=0; i < SHRD_NUM_CORES; i++){
+		sg_set_page(sg + i, (struct page *)twrite_entry->twrite_hdr, PAGE_SIZE, 0);
+	}
+	
+	cmd->sdb.table.nents = SHRD_NUM_CORES;
+	cmd->sdb.length = PAGE_SIZE * SHRD_NUM_CORES;
+	
 	cmd->twrite_entry_ptr = twrite_entry;
 
 	cmd->prot_op = SCSI_PROT_NORMAL;
-	
-	if(unlikely(scsi_alloc_sgtable(&cmd->sdb, 1, GFP_ATOMIC, 0)))
-		return -1;
+	cmd->sc_data_direction = DMA_TO_DEVICE;
 
-	sg_set_page(&cmd->sdb.table.sgl, (struct page *)twrite_entry->twrite_hdr, PAGE_SIZE, 0);
-	cmd->sdb.table.nents = 1;
-	cmd->sdb.length = PAGE_SIZE;
+	scsi_shrd_setup_cmnd(cmd, twrite_entry->entry_num + SHRD_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE, 8 * SHRD_NUM_CORES, WRITE);
 
 	return 0;
 }
 
 static scsi_shrd_send_twrite_data_cmd(struct request_queue *q, struct SHRD_TWRITE *twrite_entry, struct scsi_cmnd *cmd){
 
+	
 }
 
 static scsi_shrd_send_twrite_header_cmd(struct request_queue *q, struct SHRD_TWRITE *twrite_entry, struct scsi_cmnd *cmd){
@@ -2198,7 +2221,7 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 			//need padding
 			header->o_addr[idx] = SHRD_INVALID_LPN;
 			idx++;
-			if(idx >= sectors){
+			if(idx >= sectors + header->t_addr_start){
 				printk("WARNING:: idx >= sectors at scsi_shrd_packing_rw_twrite\n");
 			}
 		}
@@ -2212,15 +2235,11 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 			scsi_shrd_map_insert(shrd->rw_mapping, shrd->shrd_rw_map[header->t_addr_start + idx]);
 
 			idx++;
-			
-			if(idx >= sectors){
-				printk("WARNING:: idx >= sectors at scsi_shrd_packing_rw_twrite\n");
-			}
 		}
 	}
 
-	if(idx != sectors)
-		printk("WARNING:: idx >= sectors at scsi_shrd_packing_rw_twrite\n");
+	shrd->rw_log_new_idx = idx;
+
 
 	//1. need to map twrite header into scsi_cmd
 	//2. need to map sg list for the request's' into single scsi_cmd.
