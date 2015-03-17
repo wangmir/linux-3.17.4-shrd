@@ -129,6 +129,13 @@ struct SHRD{
 	spinlock_t *rw_log_lock;
 	spinlock_t __jn_log_lock;
 	spinlock_t *jn_log_lock;
+
+
+	//remained command field, scsi_request_fn need to check these field first, and handle first.
+	struct scsi_cmnd *remained_twrite_header_cmd;
+	struct scsi_cmnd *remained_twrite_data_cmd;
+	struct scsi_cmnd *remained_remap_cmd;
+	struct scsi_cmnd *remained_spread_cmd;
 	
 };
 
