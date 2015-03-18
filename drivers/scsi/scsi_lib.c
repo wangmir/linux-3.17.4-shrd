@@ -1661,15 +1661,13 @@ static void scsi_done(struct scsi_cmnd *cmd)
 //SHRD component
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
-static struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, char *addr){
+static struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr){
 
 	struct rb_node * node = root->rb_node;
 
 	while (node){
 		struct SHRD_MAP *map_entry  = container_of(node, struct SHRD_MAP, node);
-		int result;
-
-		result = strcmp(addr, map_entry->o_addr);
+		int result = addr - map_entry->o_addr;
 
 		if(result < 0)
 			node = node->rb_left;
@@ -1687,7 +1685,8 @@ static int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry
 
 	while (*new){
 		struct SHRD_MAP *this = container_of(*new, struct SHRD_MAP, node);
-		int result = strcmp(map_entry->o_addr, this->o_addr);
+
+		int result = map_entry->o_addr - this->o_addr;
 
 		parent = *new;
 		if(result < 0)
@@ -1697,37 +1696,37 @@ static int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry
 		else{
 			//it means overwrite for the corresponding o_addr, so delete old map, invalid it, and insert new map.
 			rb_erase(&this->node, root);
-			memset(this, 0x00, sizeof(SHRD_MAP));
+			memset(this, 0x00, sizeof(struct SHRD_MAP));
 			scsi_shrd_map_insert(root, map_entry);
 			
-			return TRUE;
+			return 1;
 		}
 	}
 
 	rb_link_node(&map_entry->node, parent, new);
 	rb_insert_color(&map_entry->node, root);
 
-	return TRUE;
+	return 1;
 	
 }
 
 static void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree){
 
-	struct SHRD_MAP *map_entry = scsi_shrd_map_search(tree, &oaddr);
+	struct SHRD_MAP *map_entry = scsi_shrd_map_search(tree, oaddr);
 
 	if(map_entry){
 		rb_erase(&map_entry->node, tree);
-		memset(map_entry, 0x00, sizeof(SHRD_MAP));
+		memset(map_entry, 0x00, sizeof(struct SHRD_MAP));
 	}
 }
 
 static u32 scsi_shrd_init(struct request_queue *q){
 
-	scsi_device *sdev = q->queuedata;
+	struct scsi_device *sdev = q->queuedata;
 	int idx, rtn = 0;
 	sdev->shrd = NULL;
 	
-	sdev->shrd == (struct SHRD *)kmalloc(sizeof(struct SHRD), GFP_KERNEL);
+	sdev->shrd = (struct SHRD *)kmalloc(sizeof(struct SHRD), GFP_KERNEL);
 	if(sdev->shrd == NULL){
 		rtn = 1;
 		goto fin;
@@ -1747,19 +1746,19 @@ static u32 scsi_shrd_init(struct request_queue *q){
 	sdev->shrd->shrd_jn_map = (struct SHRD_MAP *)kmalloc(sizeof(struct SHRD_MAP) * SHRD_JN_LOG_SIZE_IN_PAGE, GFP_KERNEL);
 	if(sdev->shrd->shrd_jn_map == NULL){
 		rtn = 1;
+		kfree(sdev->shrd->shrd_rw_map);
 		kfree(sdev->shrd);
-		kfree(sdev->shrd_rw_map);
 		printk("SHRD::kmalloc failed on sdev->shrd->shrd_jn_map\n");
 		goto fin;
 	}
 
 	//WARNING::we need to change this. twrite_header should be allocated separatedly from twrite_cmd (as buddy, alloc_page)
-	sdev->shrd->twrite_cmd = (struct SHRD_TWRITE *)kmalloc(sizeof(struct SHRD_TWRITE) * SHRD_TWRITE_ENTRIES);
+	sdev->shrd->twrite_cmd = (struct SHRD_TWRITE *)kmalloc(sizeof(struct SHRD_TWRITE) * SHRD_TWRITE_ENTRIES, GFP_KERNEL);
 	if(sdev->shrd->twrite_cmd == NULL){
 		rtn = 1;
+		kfree(sdev->shrd->shrd_rw_map);
+		kfree(sdev->shrd->shrd_jn_map);
 		kfree(sdev->shrd);
-		kfree(sdev->shrd_rw_map);
-		kfree(sdev->shrd_jn_map);
 		printk("SHRD::kmalloc failed on sdev->shrd->twrite_cmd\n");
 		goto fin;
 	}
@@ -1771,13 +1770,14 @@ static u32 scsi_shrd_init(struct request_queue *q){
 		}
 	}
 
-	sdev->shrd->remap_cmd = (struct SHRD_REMAP *)kmalloc(sizeof(struct SHRD_REMAP) * SHRD_REMAP_ENTRIES);
+	sdev->shrd->remap_cmd = (struct SHRD_REMAP *)kmalloc(sizeof(struct SHRD_REMAP) * SHRD_REMAP_ENTRIES, GFP_KERNEL);
 	if(sdev->shrd->remap_cmd == NULL){
 		rtn = 1;
+		kfree(sdev->shrd->shrd_rw_map);
+		kfree(sdev->shrd->shrd_jn_map);
+		kfree(sdev->shrd->twrite_cmd);
 		kfree(sdev->shrd);
-		kfree(sdev->shrd_rw_map);
-		kfree(sdev->shrd_jn_map);
-		kfree(sdev->twrite_cmd);
+		
 		printk("SHRD::kmalloc failed on sdev->shrd->remap_cmd\n");
 		goto fin;
 	}
@@ -1800,7 +1800,6 @@ static u32 scsi_shrd_init(struct request_queue *q){
 	//in here.
 	spin_lock_irq(sdev->shrd->rw_log_lock);
 	INIT_LIST_HEAD(&sdev->shrd->free_twrite_cmd_list);
-	INIT_LIST_HEAD(&sdev->shrd->todo_twrite_cmd_list);
 
 	for(idx= 0; idx < SHRD_TWRITE_ENTRIES; idx++){
 		INIT_LIST_HEAD(&sdev->shrd->twrite_cmd[idx].req_list);
@@ -1811,7 +1810,6 @@ static u32 scsi_shrd_init(struct request_queue *q){
 
 	spin_lock_irq(sdev->shrd->jn_log_lock);
 	INIT_LIST_HEAD(&sdev->shrd->free_remap_cmd_list);
-	INIT_LIST_HEAD(&sdev->shrd->todo_remap_cmd_list);
 
 	for(idx=0; idx<SHRD_REMAP_ENTRIES; idx++){
 		sdev->shrd->remap_cmd[idx].entry_num = idx;
@@ -1835,7 +1833,7 @@ static void scsi_shrd_prep_non_twrite_req(struct request_queue *q, struct reques
 	
 	ret = scsi_prep_fn(q, rq);
 	if (ret == BLKPREP_OK) {
-		break;
+		return;
 	} else if (ret == BLKPREP_DEFER) {
 		/*
 		 * the request may have been (partially) prepped.
@@ -1853,7 +1851,7 @@ static void scsi_shrd_prep_non_twrite_req(struct request_queue *q, struct reques
 		}
 
 		rq = NULL;
-		break;
+		return;
 	} else if (ret == BLKPREP_KILL) {
 		rq->cmd_flags |= REQ_QUIET;
 		/*
@@ -1864,14 +1862,14 @@ static void scsi_shrd_prep_non_twrite_req(struct request_queue *q, struct reques
 		__blk_end_request_all(rq, -EIO);
 	} else {
 		printk(KERN_ERR "%s: bad return=%d\n", __func__, ret);
-		break;
+		return;
 	}
 }
 
 /*
 	Prep function for random write packing into twrite
 */
-static SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq){
+static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq){
 
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
@@ -1880,13 +1878,13 @@ static SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct req
 	struct request *cur = rq, *next = NULL;
 	bool put_back = true;
 	u8 reqs = 0;
-	u8 max_packed_rw = 0;
+	u32 max_packed_rw = 0;
 	u32 req_sectors = 0;
 	u32 phys_segments = 0;
 	u32 log_addr;
 	int ret;
 
-	ret = scsi_prep_state_check(sdev, req);
+	ret = scsi_prep_state_check(sdev, rq);
 	if(ret != BLKPREP_OK)
 		goto no_pack;
 	if(!(rq->cmd_flags & REQ_WRITE))
@@ -1907,7 +1905,7 @@ static SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct req
 		//not aligned, need to pad
 		if(req_sectors + 1 > max_packed_rw){
 			req_sectors -= blk_rq_sectors(cur);
-			break;
+			goto no_pack;
 		}
 		else{
 			req_sectors++;
@@ -1922,7 +1920,7 @@ static SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct req
 	//in here, rw log can goto log start when there are "enough space to allocate twrite".
 	if((SHRD_RW_LOG_SIZE_IN_PAGE - shrd->rw_log_new_idx) >= SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE){
 		//there are enough space in the tail of log. 
-		max_packed_rw = (SHRD_RW_LOG_SIZE_IN_PAGE - shrd->rw_log_new_idx) * << 3; //page size
+		max_packed_rw = (SHRD_RW_LOG_SIZE_IN_PAGE - shrd->rw_log_new_idx)  << 3; //page size
 	}
 	else{
 		//we need to move the log start ptr into log front
@@ -2014,9 +2012,15 @@ static void scsi_shrd_done(struct scsi_cmnd *cmd){
 
 	//if cmd is for the twrite header
 
+	
+
 	// if cmd is for the twrite data
 
+	
+
 	//if cmd is for the remap cmd
+
+	
 
 	//if cmd is for the sp read
 }
@@ -2044,9 +2048,10 @@ static int scsi_shrd_setup_cmnd(struct scsi_cmnd *SCpnt, sector_t block, sector_
 
 	struct scsi_device *sdp = SCpnt->device;
 	int ret = BLKPREP_KILL;
+	unsigned char protect = 0;
 	SCpnt->cmnd = SCpnt->__cmnd;
 
-	memset(cmd->cmnd, 0x00, BLK_MAX_CDB);
+	memset(SCpnt->cmnd, 0x00, BLK_MAX_CDB);
 	
 	if (direction == WRITE) {
 		SCpnt->cmnd[0] = WRITE_6;
@@ -2054,7 +2059,7 @@ static int scsi_shrd_setup_cmnd(struct scsi_cmnd *SCpnt, sector_t block, sector_
 	} else if (direction == READ) {
 		SCpnt->cmnd[0] = READ_6;
 	} else {
-		scmd_printk(KERN_ERR, SCpnt, "Unknown command %llx\n", (unsigned long long) rq->cmd_flags);
+		scmd_printk(KERN_ERR, SCpnt, "Unknown command\n");
 		goto out;
 	}
 	SCSI_LOG_HLQUEUE(2, scmd_printk(KERN_INFO, SCpnt,
@@ -2064,7 +2069,7 @@ static int scsi_shrd_setup_cmnd(struct scsi_cmnd *SCpnt, sector_t block, sector_
 						this_count));
 
 	SCpnt->cmnd[0] += READ_10 - READ_6;
-	SCpnt->cmnd[1] = protect | ((rq->cmd_flags & REQ_FUA) ? 0x8 : 0);
+	SCpnt->cmnd[1] = 0;
 	SCpnt->cmnd[2] = (unsigned char) (block >> 24) & 0xff;
 	SCpnt->cmnd[3] = (unsigned char) (block >> 16) & 0xff;
 	SCpnt->cmnd[4] = (unsigned char) (block >> 8) & 0xff;
@@ -2075,7 +2080,7 @@ static int scsi_shrd_setup_cmnd(struct scsi_cmnd *SCpnt, sector_t block, sector_
 	
 	SCpnt->transfersize = sdp->sector_size;
 	SCpnt->underflow = this_count << 9;
-	SCpnt->allowed = SD_MAX_RETRIES;
+	SCpnt->allowed = 5; //SD_MAX_RETRIES on sd.c
 
 	ret = BLKPREP_OK;
 
@@ -2087,7 +2092,7 @@ out:
 /*
 	Make twrite command with request data.
 */
-static int scsi_shrd_make_twrite_data_cmd(struct request_queue q, struct SHRD_TWRITE *twrite_entry,  struct scsi_cmnd *cmd){
+static int scsi_shrd_make_twrite_data_cmd(struct request_queue *q, struct SHRD_TWRITE *twrite_entry,  struct scsi_cmnd *cmd){
 
 	struct request *prq;
 	u32 sg_len = 0;
@@ -2095,7 +2100,7 @@ static int scsi_shrd_make_twrite_data_cmd(struct request_queue q, struct SHRD_TW
 	u32 idx = start_addr;
 	struct scatterlist *sg, *__sg;
 
-	if(unlikely(scsi_alloc_sgtable(&cmd.sdb, twrite_entry->phys_segments, GFP_ATOMIC, 0))){
+	if(unlikely(scsi_alloc_sgtable(&cmd->sdb, twrite_entry->phys_segments, GFP_ATOMIC, 0))){
 		printk("SHRD::WARNING, scsi_alloc_sgtable() fail on scsi_shrd_make_twrite_data_cmd\n");
 		return -1;
 	}
@@ -2106,7 +2111,7 @@ static int scsi_shrd_make_twrite_data_cmd(struct request_queue q, struct SHRD_TW
 	//need to consider padding.
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
 
-		if(idx & 0x1 != (blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1){
+		if((idx & 0x1) != ((blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 			sg_set_buf(__sg, twrite_entry->twrite_hdr, PAGE_SIZE); //just fill dummy data (to reduce the memory consume, reuse header buf)
 			(__sg++)->page_link &= ~0x02;
 			sg_len++;
@@ -2133,7 +2138,7 @@ static int scsi_shrd_make_twrite_data_cmd(struct request_queue q, struct SHRD_TW
 /*
 	Make twrite command with header data.
 */
-static int scsi_shrd_make_twrite_header_cmd(struct request_queue q, struct SHRD_TWRITE *twrite_entry, struct scsi_cmnd *cmd){
+static int scsi_shrd_make_twrite_header_cmd(struct request_queue *q, struct SHRD_TWRITE *twrite_entry, struct scsi_cmnd *cmd){
 
 	struct scsi_device *sdev = q->queuedata;
 	int i =0; 
@@ -2153,7 +2158,7 @@ static int scsi_shrd_make_twrite_header_cmd(struct request_queue q, struct SHRD_
 	if(unlikely(scsi_alloc_sgtable(&cmd->sdb, SHRD_NUM_CORES, GFP_ATOMIC, 0)))
 		return -1;
 	
-	sg = &cmd->sdb.table.sgl;
+	sg = cmd->sdb.table.sgl;
 	sg_init_table(sg, SHRD_NUM_CORES);
 	
 	for(i=0; i < SHRD_NUM_CORES; i++){
@@ -2186,7 +2191,7 @@ static int scsi_shrd_send_twrite_data_cmd(struct request_queue *q, struct SHRD_T
 	}
 	
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
-		if(!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
+		if(!(blk_queue_tagged(q) && !blk_queue_start_tag(q, prq)))
 			blk_start_request(prq);
 	}
 
@@ -2281,10 +2286,10 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 	struct request *prq;
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
-	SHRD_TWRITE_HEADER *header = twrite_entry->twrite_hdr;
+	struct SHRD_TWRITE_HEADER *header = twrite_entry->twrite_hdr;
 	int idx = 0, sectors = twrite_entry->blocks;
 	
-	memset(header, 0x00, sizeof(SHRD_TWRITE_HEADER));
+	memset(header, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
 
 	//fill header with data
 
@@ -2297,7 +2302,7 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
 
 		int i;
-		if(idx & 0x1 != (blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1){
+		if((idx & 0x1) != ((blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 			//need padding
 			header->o_addr[idx] = SHRD_INVALID_LPN;
 			idx++;
@@ -2312,7 +2317,7 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 			shrd->shrd_rw_map[header->t_addr_start + idx].t_addr = header->t_addr_start + idx;
 			shrd->shrd_rw_map[header->t_addr_start + idx].o_addr = header->o_addr[idx];
 			shrd->shrd_rw_map[header->t_addr_start + idx].valid = SHRD_VALID_MAP;
-			scsi_shrd_map_insert(shrd->rw_mapping, shrd->shrd_rw_map[header->t_addr_start + idx]);
+			scsi_shrd_map_insert(&shrd->rw_mapping, &shrd->shrd_rw_map[header->t_addr_start + idx]);
 
 			idx++;
 		}

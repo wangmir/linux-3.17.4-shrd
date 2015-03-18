@@ -1,7 +1,13 @@
 #ifndef _SCSI_SHRD_H
 #define _SCSI_SHRD_H
 
+#include <linux/dma-mapping.h>
+#include <linux/blkdev.h>
 #include <linux/list.h>
+#include <linux/types.h>
+#include <linux/timer.h>
+#include <linux/scatterlist.h>
+#include <scsi/scsi_device.h>
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
@@ -28,8 +34,8 @@
 
 #define SHRD_CMD_START_IN_PAGE SHRD_TOTAL_LPN
 #define SHRD_TWRITE_CMD_START_IN_PAGE SHRD_CMD_START_IN_PAGE
-#define SHRD_REMAP_CMD_START_IN_PAGE (SHRD_CMD_START_IN_PAGE + 32 * NUM_CORES) //# of ncq * 2 (2 cores)
-#define SHRD_COMFRIM_RD_CMD_IN_PAGE (SHRD_REMAP_CMD_START_IN_PAGE + 32 * NUM_CORES)
+#define SHRD_REMAP_CMD_START_IN_PAGE (SHRD_CMD_START_IN_PAGE + 32 * SHRD_NUM_CORES) //# of ncq * 2 (2 cores)
+#define SHRD_COMFRIM_RD_CMD_IN_PAGE (SHRD_REMAP_CMD_START_IN_PAGE + 32 * SHRD_NUM_CORES)
 
 #define SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE 64
 
@@ -160,8 +166,8 @@ static inline void shrd_put_remap_entry(struct SHRD *shrd, struct SHRD_REMAP* en
 
 static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 
-	LIST_HEAD_INIT(&entry->req_list);
-	entry->twrite_cmd_list = NULL;
+	INIT_LIST_HEAD(&entry->req_list);
+	INIT_LIST_HEAD(&entry->twrite_cmd_list);
 	entry->blocks = 0;
 	entry->nr_requests = 0;
 	entry->in_use = 0;
@@ -170,7 +176,7 @@ static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 
 static inline void shrd_clear_remap_entry(struct SHRD_REMAP* entry){
 
-	entry->remap_cmd_list = NULL;
+	INIT_LIST_HEAD(&entry->remap_cmd_list);
 	entry->in_use = 0;
 }
 

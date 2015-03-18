@@ -688,7 +688,7 @@ sdev_store_shrd_enable(struct device *dev, struct device_attribute *attr,
 	sdev->shrd_on = shrd_on;
 	if(shrd_on == 1){
 		spin_lock_irq(sdev->request_queue->queue_lock);
-		sdev->request_queue->prep_rq_fn == NULL;
+		sdev->request_queue->prep_rq_fn = NULL;
 		spin_unlock_irq(sdev->request_queue->queue_lock);
 	}
 	return count;
