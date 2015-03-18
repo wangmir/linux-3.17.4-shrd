@@ -43,6 +43,9 @@
 #define SHRD_NUM_MAX_TWRITE_ENTRY 128
 #define SHRD_NUM_MAX_REMAP_ENTRY 510
 
+#define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 2)
+
+
 #define SHRD_INVALID_LPN 0x7fffffff
 
 enum SHRD_MAP_FLAG {
@@ -55,7 +58,7 @@ struct SHRD_MAP {
 	struct rb_node node;
 	u32 o_addr;
 	u32 t_addr; //taddr is actually same as the array offset of each map e.g. shrd_rw_map[i] == shrd_rw_map[i].t_addr;
-	u8 valid;
+	u8 flags;
 };
 
 /*

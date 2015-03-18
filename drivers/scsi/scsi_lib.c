@@ -2316,7 +2316,7 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 			
 			shrd->shrd_rw_map[header->t_addr_start + idx].t_addr = header->t_addr_start + idx;
 			shrd->shrd_rw_map[header->t_addr_start + idx].o_addr = header->o_addr[idx];
-			shrd->shrd_rw_map[header->t_addr_start + idx].valid = SHRD_VALID_MAP;
+			shrd->shrd_rw_map[header->t_addr_start + idx].flags = SHRD_VALID_MAP;
 			scsi_shrd_map_insert(&shrd->rw_mapping, &shrd->shrd_rw_map[header->t_addr_start + idx]);
 
 			idx++;
@@ -2327,13 +2327,32 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 	
 }
 
+static int scsi_shrd_make_remap_data_cmd(struct request_queue *q, struct SHRD_REMAP *remap_entry, struct scsi_cmnd *cmd){
+
+	struct scsi_device *sdev = q->queuedata;
+	int i =0; 
+
+	
+}
+
+static void __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 start, u32 end){
+
+	struct scsi_device *sdev = q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
+
+}
+
 static int scsi_shrd_do_remap_rw_log_if_need(struct request_queue *q){
 
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
 	u32 start = shrd->rw_log_start_idx;
 	u32 new = shrd->rw_log_new_idx;
+
 	
+
+	
+send_cmd:
 	
 }
 
