@@ -2327,6 +2327,17 @@ static int scsi_shrd_packing_rw_twrite(struct request_queue *q, struct request *
 	
 }
 
+static int scsi_shrd_do_remap_rw_log_if_need(struct request_queue *q){
+
+	struct scsi_device *sdev = q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
+	u32 start = shrd->rw_log_start_idx;
+	u32 new = shrd->rw_log_new_idx;
+	
+	
+}
+
+
 #endif
 
 /*
@@ -2347,7 +2358,6 @@ static void scsi_request_fn(struct request_queue *q)
 	struct scsi_device *sdev = q->queuedata;
 	struct Scsi_Host *shost;
 	struct scsi_cmnd *cmd;
-
 #ifdef CONFIG_SCSI_SHRD_TEST0
 	struct scsi_cmnd *headercmd;
 #endif
@@ -2358,11 +2368,6 @@ static void scsi_request_fn(struct request_queue *q)
 	 * the host is no longer able to accept any more requests.
 	 */
 	shost = sdev->host;
-
-#ifdef CONFIG_SCSI_SHRD_TEST0
-	//before handle new request, we need to check there are remained twrite header, data or remap command.
-	//if exists, than handle it first.
-#endif
 	
 	for (;;) {
 		int rtn;
@@ -2371,6 +2376,44 @@ static void scsi_request_fn(struct request_queue *q)
 		 * that the request is fully prepared even if we cannot
 		 * accept it.
 		 */
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
+		//before handle new request, we need to check there are remained twrite header, data or remap command.
+		//if exists, than handle it first.	
+		if(sdev->shrd_on){
+			spin_lock_irq(sdev->shrd->rw_log_lock);
+			struct scsi_cmnd *remained_cmd = sdev->shrd->remained_twrite_header_cmd;
+			
+			if(remained_cmd){
+				rtn = scsi_shrd_send_twrite_header_cmd(q, remained_cmd->twrite_entry_ptr, remained_cmd);
+
+				if(rtn){
+					spin_unlock_irq(sdev->shrd->rw_log_lock);
+					return;
+				}
+				sdev->shrd->remained_twrite_header_cmd = NULL;
+				remained_cmd = NULL;
+			}
+			remained_cmd = sdev->shrd->remained_twrite_data_cmd;
+
+			if(remained_cmd){
+				rtn = scsi_shrd_send_twrite_data_cmd(q, remained_cmd->twrite_entry_ptr, remained_cmd);
+
+				if(rtn){
+					spin_unlock_irq(sdev->shrd->rw_log_lock);
+					return;
+				}
+				sdev->shrd->remained_twrite_data_cmd = NULL;
+				remained_cmd = NULL;
+			}
+
+			scsi_shrd_do_remap_rw_log_if_need(q);
+			
+			spin_unlock_irq(sdev->shrd->rw_log_lock);
+		}
+		
+#endif
+		
 		req = blk_peek_request(q);
 		if (!req)
 			break;
@@ -2389,27 +2432,29 @@ static void scsi_request_fn(struct request_queue *q)
 
 				scsi_shrd_make_twrite_header_cmd(q, twrite_entry, headercmd);
 
-				//ON_GOING CODE (we need to fix handling of rtn for each cmd handling
+				scsi_shrd_make_twrite_data_cmd(q, twrite_entry, cmd);
 
 				rtn = scsi_shrd_send_twrite_header_cmd(q, twrite_entry, headercmd);
 
 				if(rtn){
 					sdev->shrd->remained_twrite_header_cmd = headercmd;
+					sdev->shrd->remained_twrite_data_cmd = cmd;
 					spin_unlock_irq(sdev->shrd->rw_log_lock);
 					return;
 				}
 
-				scsi_shrd_make_twrite_data_cmd(q, twrite_entry, cmd);
-
 				rtn =scsi_shrd_send_twrite_data_cmd(q, twrite_entry, cmd);
 
-				if(rtn)
+				if(rtn){
 					sdev->shrd->remained_twrite_data_cmd = cmd;
+					spin_unlock_irq(sdev->shrd->rw_log_lock);
+					return;
+				}
 				
 				spin_unlock_irq(sdev->shrd->rw_log_lock);
 				
 				//we need to finish handling of SHRD on here (because rest of code in this function is for the non-packed request
-				return;
+				continue;
 			}
 			else {
 				//generic prep procedure (for non_twrite request)
@@ -2760,6 +2805,7 @@ EXPORT_SYMBOL(__scsi_alloc_queue);
 
 struct request_queue *scsi_alloc_queue(struct scsi_device *sdev)
 {
+	int rtn = 0;
 	struct request_queue *q;
 
 	q = __scsi_alloc_queue(sdev->host, scsi_request_fn);
@@ -2771,6 +2817,14 @@ struct request_queue *scsi_alloc_queue(struct scsi_device *sdev)
 	blk_queue_softirq_done(q, scsi_softirq_done);
 	blk_queue_rq_timed_out(q, scsi_times_out);
 	blk_queue_lld_busy(q, scsi_lld_busy);
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
+	rtn = scsi_shrd_init(q);
+	if(rtn){
+		printk("SHRD::shrd init failed\n");
+	}
+#endif
+
 	return q;
 }
 
