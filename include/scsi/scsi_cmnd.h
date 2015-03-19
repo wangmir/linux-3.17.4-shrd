@@ -108,6 +108,7 @@ struct scsi_cmnd {
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 	struct SHRD_TWRITE *twrite_entry_ptr;
+	struct SHRD_REMAP *remap_entry_ptr;
 	unsigned char __cmnd[BLK_MAX_CDB]; //__cmnd is for the twrite header or remap data (it means that has no request structure.)
 #endif
 

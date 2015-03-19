@@ -15,10 +15,10 @@
 
 #define SHRD_SECTORS_PER_PAGE 8
 
-#define SHRD_RW_THRESHOLD_IN_SECTOR 32
+#define SHRD_RW_THRESHOLD_IN_SECTOR 32 //under 16KB write requests will be gathered as twrite data
 
 #define SHRD_TWRITE_ENTRIES 32
-#define SHRD_REMAP_ENTRIES 32
+#define SHRD_REMAP_ENTRIES 4  // (experimental)
 
 #define SHRD_RW_LOG_SIZE_IN_MB 32
 #define SHRD_RW_LOG_SIZE_IN_PAGE (SHRD_RW_LOG_SIZE_IN_MB * 256)
@@ -27,7 +27,7 @@
 #define SHRD_JN_LOG_SIZE_IN_PAGE (SHRD_JN_LOG_SIZE_IN_MB * 256)
 
 //110 * 1024 * 256 - SHRD_JN_LOG_SIZE_IN_PAGE - SHRD_RW_LOG_SIZE_IN_PAGE
-#define SHRD_TOTAL_LPN (110 * 1024 * 256)
+#define SHRD_TOTAL_LPN (110 * 1024 * 256) //110GB
 #define SHRD_LOG_START_IN_PAGE (SHRD_TOTAL_LPN - SHRD_RW_LOG_SIZE_IN_PAGE - SHRD_JN_LOG_SIZE_IN_PAGE)
 #define SHRD_RW_LOG_START_IN_PAGE SHRD_JN_LOG_START_IN_PAGE + SHRD_JN_LOG_SIZE_IN_PAGE
 #define SHRD_JN_LOG_START_IN_PAGE SHRD_LOG_START_IN_PAGE
@@ -40,11 +40,15 @@
 #define SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE 64
 
 #define SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR 1024
+
 #define SHRD_NUM_MAX_TWRITE_ENTRY 128
 #define SHRD_NUM_MAX_REMAP_ENTRY 510
 
-#define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 2)
+#define SHRD_REMAP_DATA_PAGE 8 // 8 pages (16pages for 2 cores) make single remap cmd (experimental)
+#define SHRD_MAX_REMAP_DATA_ENTRIES 8 * SHRD_NUM_MAX_REMAP_ENTRY
 
+
+#define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 2)
 
 #define SHRD_INVALID_LPN 0x7fffffff
 
@@ -99,7 +103,7 @@ struct SHRD_REMAP_DATA{
 
 struct SHRD_REMAP{
 	struct list_head remap_cmd_list; //is used for ongoing list and free cmd list
-	struct SHRD_REMAP_DATA *remap_data;
+	struct SHRD_REMAP_DATA *remap_data[SHRD_REMAP_DATA_PAGE];
 	u8 in_use;
 	u8 entry_num;
 };
@@ -125,10 +129,11 @@ struct SHRD{
 	//for each index indicator for write and remap, should acquire lock to handle each entries.
 	u32 rw_log_start_idx;
 	u32 rw_log_new_idx;
-	//u32 rw_log_allocated_idx; 
+	u32 rw_log_valid_count;
+	u32 rw_log_remapping_count;
+	
 	u32 jn_log_start_idx;
-	u32 jn_log_new_idx;
-	//u32 jn_log_allocated_idx;  
+	u32 jn_log_new_idx;  
 
 	/*
 	protect each log enries from double allocation. __xx_log_lock should never be used directly.

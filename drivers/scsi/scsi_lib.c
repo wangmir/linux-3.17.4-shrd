@@ -1783,9 +1783,12 @@ static u32 scsi_shrd_init(struct request_queue *q){
 	}
 
 	for(idx = 0; idx < SHRD_REMAP_ENTRIES; idx++){
-		sdev->shrd->remap_cmd[idx].remap_data = (struct SHRD_REMAP_DATA *) alloc_pages(GFP_KERNEL, 0);
-		if(sdev->shrd->remap_cmd[idx].remap_data == NULL){
-			printk("SHRD:: alloc failed during 4KB remap data, what should i do?\n");
+		int iter;
+		for(iter = 0; iter < SHRD_REMAP_DATA_PAGE; iter++){
+			sdev->shrd->remap_cmd[idx].remap_data[iter] = (struct SHRD_REMAP_DATA *) alloc_pages(GFP_KERNEL, 0);
+			if(sdev->shrd->remap_cmd[idx].remap_data[iter] == NULL){
+				printk("SHRD:: alloc failed during 4KB remap data, what should i do?\n");
+			}
 		}
 	}
 	
@@ -1900,8 +1903,41 @@ static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, str
 	req_sectors += blk_rq_sectors(cur);
 	phys_segments += cur->nr_phys_segments;
 
+	//we need to get a address space for twrite (only for RW)
+	//if there are not enough space (512KB), we can choose from two options. 1) packing small size, 2) move to log start addr
+	//
+
+	if(shrd->rw_log_new_idx > shrd->rw_log_start_idx){
+		//in here, rw log can goto log start when there are "enough space to allocate twrite".
+		if((SHRD_RW_LOG_SIZE_IN_PAGE - shrd->rw_log_new_idx) >= SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE){
+			//there are enough space in the tail of log. 
+			max_packed_rw = (SHRD_RW_LOG_SIZE_IN_PAGE - shrd->rw_log_new_idx)  << 3; //page size
+			if(max_packed_rw > SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR)
+				max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
+		}
+		else{
+			//we need to move the log start ptr into log front
+			if(shrd->rw_log_start_idx >= SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR){
+				shrd->rw_log_new_idx = 0; //goto log end because enoulgh slot is presented.
+			}
+			else
+				goto no_pack; //log is full, don't packed.
+		}
+	}
+	else{
+		if((shrd->rw_log_start_idx - shrd->rw_log_new_idx) >= SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE){
+			max_packed_rw = (shrd->rw_log_start_idx - shrd->rw_log_new_idx) <<3;
+			if(max_packed_rw > SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR)
+				max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
+		}
+		else
+			goto no_pack;
+	}
+	
+	
+	
 	//need to consider padding
-	if(log_addr & 0x1 != (blk_rq_pos(cur) / SHRD_SECTORS_PER_PAGE) & 0x1){
+	if((log_addr & 0x1) != ((blk_rq_pos(cur) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 		//not aligned, need to pad
 		if(req_sectors + 1 > max_packed_rw){
 			req_sectors -= blk_rq_sectors(cur);
@@ -1910,26 +1946,6 @@ static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, str
 		else{
 			req_sectors++;
 			phys_segments++;
-		}
-	}
-
-	//we need to get a address space for twrite (only for RW)
-	//if there are not enough space (512KB), we can choose from two options. 1) packing small size, 2) move to log start addr
-	//
-	
-	//in here, rw log can goto log start when there are "enough space to allocate twrite".
-	if((SHRD_RW_LOG_SIZE_IN_PAGE - shrd->rw_log_new_idx) >= SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE){
-		//there are enough space in the tail of log. 
-		max_packed_rw = (SHRD_RW_LOG_SIZE_IN_PAGE - shrd->rw_log_new_idx)  << 3; //page size
-	}
-	else{
-		//we need to move the log start ptr into log front
-		if(shrd->rw_log_start_idx >= SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR){
-			shrd->rw_log_new_idx = 0; //goto log end because enoulgh slot is presented.
-		}
-		else{
-			//log is full, don't packed.
-			goto no_pack;
 		}
 	}
 	
@@ -1974,7 +1990,7 @@ static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, str
 		}
 
 		//need to consider padding
-		if(log_addr & 0x1 != (blk_rq_pos(next) / SHRD_SECTORS_PER_PAGE) & 0x1){
+		if((log_addr & 0x1) != ((blk_rq_pos(next) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 			//not aligned, need to pad
 			if(req_sectors + 1 > max_packed_rw){
 				req_sectors -= blk_rq_sectors(next);
@@ -2173,7 +2189,7 @@ static int scsi_shrd_make_twrite_header_cmd(struct request_queue *q, struct SHRD
 	cmd->prot_op = SCSI_PROT_NORMAL;
 	cmd->sc_data_direction = DMA_TO_DEVICE;
 
-	scsi_shrd_setup_cmnd(cmd, twrite_entry->entry_num + SHRD_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE, 8 * SHRD_NUM_CORES, WRITE);
+	scsi_shrd_setup_cmnd(cmd, twrite_entry->entry_num * SHRD_NUM_CORES + SHRD_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE, 8 * SHRD_NUM_CORES, WRITE);
 
 	return 0;
 }
@@ -2335,10 +2351,45 @@ static int scsi_shrd_make_remap_data_cmd(struct request_queue *q, struct SHRD_RE
 	
 }
 
-static void __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 start, u32 end){
+static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 size){
 
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
+	struct rb_node *node;
+	struct SHRD_MAP *map;
+	struct SHRD_REMAP *entry;
+	u32 max_remap_data = 0;
+	u32 start_idx = shrd->rw_log_start_idx, new_idx = shrd->rw_log_new_idx;
+	u32 idx = 0;
+	
+	entry = shrd_get_remap_entry(shrd);
+	if(entry == NULL)
+		return NULL;
+	shrd_clear_remap_entry(entry);
+
+	max_remap_data = size;
+	if(max_remap_data > SHRD_MAX_REMAP_DATA_ENTRIES)
+		max_remap_data = SHRD_MAX_REMAP_DATA_ENTRIES;
+
+	for(node = rb_first(&shrd->rw_mapping); node; rb_next(node)){
+
+		map = rb_entry(node, struct SHRD_MAP, node);
+		if(map->flags != SHRD_VALID_MAP)
+			continue;
+
+
+//ON_GOING code
+		if(new_idx > start_idx){
+			if((map->t_addr >= start_idx) && (map->t_addr < new_idx)){
+				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->o_addr[
+			}
+		}
+		else{
+			if((map->t_addr >= start_idx) || (map->t_addr < new_idx)){
+
+			}
+		}
+	}
 
 }
 
@@ -2346,11 +2397,20 @@ static int scsi_shrd_do_remap_rw_log_if_need(struct request_queue *q){
 
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
-	u32 start = shrd->rw_log_start_idx;
-	u32 new = shrd->rw_log_new_idx;
+	struct scsi_cmnd *cmd;
+	struct SHRD_REMAP *remap_entry;
+	u32 start_idx = shrd->rw_log_start_idx;
+	u32 new_idx = shrd->rw_log_new_idx;
+	u32 size; //used log size
+	int rtn = 1;
 
-	
+	(new_idx > start_idx) ? (size = new_idx - start_idx) : (size = SHRD_RW_LOG_SIZE_IN_PAGE - start_idx + new_idx);
 
+	if(size > SHRD_RW_REMAP_THRESHOLD_IN_PAGE){
+		//need to remap
+		remap_entry = __scsi_shrd_do_remap_rw_log(q, size);
+		
+	}
 	
 send_cmd:
 	
