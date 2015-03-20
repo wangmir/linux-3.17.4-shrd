@@ -2524,9 +2524,17 @@ static int scsi_shrd_handle_remained_cmnd(struct request_queue *q){
 
 static int scsi_shrd_check_read_requests(struct request_queue *q, struct request *rq){
 
-	int rq_sectors = blk_rq_sectors(rq);
+	u32 rq_sectors = blk_rq_sectors(rq);
+	u32 rq_pages = rq_sectors / SHRD_SECTORS_PER_PAGE + ((rq_sectors % SHRD_SECTORS_PER_PAGE == 0) ? 0 : 1);
+	u32 iter = 0;
 
-	if(rq_sectors > 
+	for(iter = 0; iter < rq_pages; iter++){
+
+		//check every pages for the requests
+		//it can be overhead so we might need to use bloom filter
+
+		
+	}
 	
 }
 
