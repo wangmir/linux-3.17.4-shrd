@@ -18,7 +18,7 @@
 #define SHRD_RW_THRESHOLD_IN_SECTOR 32 //under 16KB write requests will be gathered as twrite data
 
 #define SHRD_TWRITE_ENTRIES 32
-#define SHRD_REMAP_ENTRIES 4  // (experimental)
+#define SHRD_REMAP_ENTRIES 32  // (experimental)
 
 #define SHRD_RW_LOG_SIZE_IN_MB 32
 #define SHRD_RW_LOG_SIZE_IN_PAGE (SHRD_RW_LOG_SIZE_IN_MB * 256)
@@ -44,8 +44,8 @@
 #define SHRD_NUM_MAX_TWRITE_ENTRY 128
 #define SHRD_NUM_MAX_REMAP_ENTRY 510
 
-#define SHRD_REMAP_DATA_PAGE 8 // 8 pages (16pages for 2 cores) make single remap cmd (experimental)
-#define SHRD_MAX_REMAP_DATA_ENTRIES 8 * SHRD_NUM_MAX_REMAP_ENTRY
+#define SHRD_REMAP_DATA_PAGE 1 // 1page (experimental)
+#define SHRD_MAX_REMAP_DATA_ENTRIES SHRD_REMAP_DATA_PAGE * SHRD_NUM_MAX_REMAP_ENTRY
 
 
 #define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 2)
@@ -96,6 +96,7 @@ struct SHRD_TWRITE{
 */
 struct SHRD_REMAP_DATA{
 	u32 t_addr_start;
+	u32 t_addr_end;
 	u32 remap_count;
 	u32 t_addr[SHRD_NUM_MAX_REMAP_ENTRY];
 	u32 o_addr[SHRD_NUM_MAX_REMAP_ENTRY];

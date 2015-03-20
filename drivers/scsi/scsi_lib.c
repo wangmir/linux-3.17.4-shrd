@@ -2251,11 +2251,11 @@ out_delay:
 	return 1;
 }
 
-static int scsi_shrd_send_twrite_header_cmd(struct request_queue *q, struct SHRD_TWRITE *twrite_entry, struct scsi_cmnd *cmd){
+static int scsi_shrd_send_non_req_cmd(struct request_queue *q, struct scsi_cmnd *cmd){
 
 	struct scsi_device *sdev = q->queuedata;
 	struct Scsi_Host *shost = sdev->host;
-	int rtn;
+	int rtn = 0;
 
 	if(!scsi_dev_queue_ready(q, sdev)){ // in the scs_dev_queue_ready function, device_busy is set (atomic_inc)
 		printk("SHRD:: dev queue is currently un-available at scsi_shrd_send_twrite_header_cmd\n");
@@ -2347,6 +2347,37 @@ static int scsi_shrd_make_remap_data_cmd(struct request_queue *q, struct SHRD_RE
 
 	struct scsi_device *sdev = q->queuedata;
 	int i =0; 
+	struct scatterlist *sg;
+
+	if(!get_device(&sdev->sdev_gendev))
+		return -1;
+
+	cmd = scsi_get_command(sdev, GFP_ATOMIC);
+	if(unlikely(!cmd)){
+		printk("SHRD:: ERROR, scsi_get_command failed on scsi_shrd_make_twrite_header_cmd\n");
+		put_device(&sdev->sdev_gendev);
+		return -1;
+	}
+
+	if(unlikely(scsi_alloc_sgtable(&cmd->sdb, SHRD_NUM_CORES, GFP_ATOMIC, 0)))
+		return -1;
+	
+	sg = cmd->sdb.table.sgl;
+	sg_init_table(sg, SHRD_NUM_CORES);
+	
+	for(i=0; i < SHRD_NUM_CORES; i++){
+		sg_set_page(sg + i, (struct page *)remap_entry->remap_data, PAGE_SIZE, 0);
+	}
+	
+	cmd->sdb.table.nents = SHRD_NUM_CORES;
+	cmd->sdb.length = PAGE_SIZE * SHRD_NUM_CORES;
+	
+	cmd->remap_entry_ptr = remap_entry;
+
+	cmd->prot_op = SCSI_PROT_NORMAL;
+	cmd->sc_data_direction = DMA_TO_DEVICE;
+
+	scsi_shrd_setup_cmnd(cmd, remap_entry->entry_num * SHRD_NUM_CORES + SHRD_REMAP_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE, 8 * SHRD_NUM_CORES, WRITE);
 
 	
 }
@@ -2358,18 +2389,35 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	struct rb_node *node;
 	struct SHRD_MAP *map;
 	struct SHRD_REMAP *entry;
-	u32 max_remap_data = 0;
-	u32 start_idx = shrd->rw_log_start_idx, new_idx = shrd->rw_log_new_idx;
-	u32 idx = 0;
+	u32 start_idx = shrd->rw_log_start_idx, end_idx;
+	u32 idx = 0, cnt = 0;
 	
 	entry = shrd_get_remap_entry(shrd);
 	if(entry == NULL)
 		return NULL;
 	shrd_clear_remap_entry(entry);
 
-	max_remap_data = size;
-	if(max_remap_data > SHRD_MAX_REMAP_DATA_ENTRIES)
-		max_remap_data = SHRD_MAX_REMAP_DATA_ENTRIES;
+	for(idx = 0; idx < size; idx++){
+		u32 log_idx = idx + start_idx;
+		if(log_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
+			log_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
+		
+		if(shrd->shrd_rw_map[log_idx].flags == SHRD_VALID_MAP){
+			cnt++;
+			if(cnt == SHRD_NUM_MAX_REMAP_ENTRY)
+				break;
+		}
+	}
+
+	end_idx = start_idx + idx;
+	if(end_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
+		end_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
+
+	entry->remap_data[0].t_addr_start = start_idx;
+	entry->remap_data[0].t_addr_end = end_idx;
+	entry->remap_data[0].remap_count = cnt;
+
+	idx = 0;
 
 	for(node = rb_first(&shrd->rw_mapping); node; rb_next(node)){
 
@@ -2377,18 +2425,25 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 		if(map->flags != SHRD_VALID_MAP)
 			continue;
 
-
-//ON_GOING code
-		if(new_idx > start_idx){
-			if((map->t_addr >= start_idx) && (map->t_addr < new_idx)){
-				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->o_addr[
+		if(end_idx > start_idx){
+			if((map->t_addr >= start_idx) && (map->t_addr <= end_idx)){
+				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->o_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY] = map->o_addr;
+				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->t_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY] = map->t_addr;
+				map->flags = SHRD_REMAPPING_MAP;
 			}
 		}
 		else{
-			if((map->t_addr >= start_idx) || (map->t_addr < new_idx)){
-
+			if((map->t_addr >= start_idx) || (map->t_addr <= end_idx)){
+				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->o_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY] = map->o_addr;
+				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->t_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY] = map->t_addr;
+				map->flags = SHRD_REMAPPING_MAP;
 			}
 		}
+		
+		idx++;
+
+		if(idx == cnt)
+			break;
 	}
 
 }
@@ -2402,17 +2457,68 @@ static int scsi_shrd_do_remap_rw_log_if_need(struct request_queue *q){
 	u32 start_idx = shrd->rw_log_start_idx;
 	u32 new_idx = shrd->rw_log_new_idx;
 	u32 size; //used log size
-	int rtn = 1;
+	int rtn = 0;
 
 	(new_idx > start_idx) ? (size = new_idx - start_idx) : (size = SHRD_RW_LOG_SIZE_IN_PAGE - start_idx + new_idx);
 
 	if(size > SHRD_RW_REMAP_THRESHOLD_IN_PAGE){
 		//need to remap
 		remap_entry = __scsi_shrd_do_remap_rw_log(q, size);
-		
+		scsi_shrd_make_remap_data_cmd(q, remap_entry,cmd);
+		rtn = scsi_shrd_send_non_req_cmd(q, cmd);
+
+		if(rtn){
+			sdev->shrd->remained_remap_cmd = cmd;
+			spin_unlock_irq(sdev->shrd->rw_log_lock);
+			return rtn;
+		}
 	}
+	return rtn;
 	
-send_cmd:
+}
+
+static int scsi_shrd_handle_remained_cmnd(struct request_queue *q){
+
+	struct scsi_device *sdev = q->queuedata;
+	struct scsi_cmnd *remained_cmd = sdev->shrd->remained_twrite_header_cmd;
+	int rtn = 0;
+			
+			if(remained_cmd){
+				rtn = scsi_shrd_send_non_req_cmd(q, remained_cmd);
+
+				if(rtn){
+					spin_unlock_irq(sdev->shrd->rw_log_lock);
+					return rtn;
+				}
+				sdev->shrd->remained_twrite_header_cmd = NULL;
+				remained_cmd = NULL;
+			}
+			remained_cmd = sdev->shrd->remained_twrite_data_cmd;
+
+			if(remained_cmd){
+				rtn = scsi_shrd_send_twrite_data_cmd(q, remained_cmd->twrite_entry_ptr, remained_cmd);
+
+				if(rtn){
+					spin_unlock_irq(sdev->shrd->rw_log_lock);
+					return rtn;
+				}
+				sdev->shrd->remained_twrite_data_cmd = NULL;
+				remained_cmd = NULL;
+			}
+
+			remained_cmd = sdev->shrd->remained_remap_cmd;
+
+			if(remained_cmd){
+				rtn = scsi_shrd_send_non_req_cmd(q, remained_cmd);
+
+				if(rtn){
+					spin_unlock_irq(sdev->shrd->rw_log_lock);
+					return rtn;
+				}
+				sdev->shrd->remained_remap_cmd = NULL;
+				remained_cmd = NULL;
+			}
+			return rtn;
 	
 }
 
@@ -2461,33 +2567,14 @@ static void scsi_request_fn(struct request_queue *q)
 		//if exists, than handle it first.	
 		if(sdev->shrd_on){
 			spin_lock_irq(sdev->shrd->rw_log_lock);
-			struct scsi_cmnd *remained_cmd = sdev->shrd->remained_twrite_header_cmd;
-			
-			if(remained_cmd){
-				rtn = scsi_shrd_send_twrite_header_cmd(q, remained_cmd->twrite_entry_ptr, remained_cmd);
 
-				if(rtn){
-					spin_unlock_irq(sdev->shrd->rw_log_lock);
-					return;
-				}
-				sdev->shrd->remained_twrite_header_cmd = NULL;
-				remained_cmd = NULL;
-			}
-			remained_cmd = sdev->shrd->remained_twrite_data_cmd;
+			rtn = scsi_shrd_handle_remained_cmnd(q);
+			if(rtn)
+				return;
 
-			if(remained_cmd){
-				rtn = scsi_shrd_send_twrite_data_cmd(q, remained_cmd->twrite_entry_ptr, remained_cmd);
-
-				if(rtn){
-					spin_unlock_irq(sdev->shrd->rw_log_lock);
-					return;
-				}
-				sdev->shrd->remained_twrite_data_cmd = NULL;
-				remained_cmd = NULL;
-			}
-
-			scsi_shrd_do_remap_rw_log_if_need(q);
-			
+			rtn = scsi_shrd_do_remap_rw_log_if_need(q);
+			if(rtn)
+				return;
 			spin_unlock_irq(sdev->shrd->rw_log_lock);
 		}
 		
@@ -2513,7 +2600,7 @@ static void scsi_request_fn(struct request_queue *q)
 
 				scsi_shrd_make_twrite_data_cmd(q, twrite_entry, cmd);
 
-				rtn = scsi_shrd_send_twrite_header_cmd(q, twrite_entry, headercmd);
+				rtn = scsi_shrd_send_non_req_cmd(q, headercmd);
 
 				if(rtn){
 					sdev->shrd->remained_twrite_header_cmd = headercmd;
@@ -2534,6 +2621,10 @@ static void scsi_request_fn(struct request_queue *q)
 				
 				//we need to finish handling of SHRD on here (because rest of code in this function is for the non-packed request
 				continue;
+			}
+			else if(!rq_data_dir(req)){
+				//read handling
+				
 			}
 			else {
 				//generic prep procedure (for non_twrite request)
