@@ -2533,7 +2533,7 @@ static int scsi_shrd_check_read_requests(struct request_queue *q, struct request
 		//check every pages for the requests
 		//it can be overhead so we might need to use bloom filter
 
-		
+		if(
 	}
 	
 }
