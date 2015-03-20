@@ -2522,6 +2522,13 @@ static int scsi_shrd_handle_remained_cmnd(struct request_queue *q){
 	
 }
 
+static int scsi_shrd_check_read_requests(struct request_queue *q, struct request *rq){
+
+	int rq_sectors = blk_rq_sectors(rq);
+
+	if(rq_sectors > 
+	
+}
 
 #endif
 
