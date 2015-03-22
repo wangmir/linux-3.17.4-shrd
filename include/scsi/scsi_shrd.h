@@ -58,6 +58,14 @@ enum SHRD_MAP_FLAG {
 	SHRD_REMAPPING_MAP, //when the read request is arrived, the corresponding data is in remapping state, then 1) send o_addr read, 2) wait (what is correct?)
 };
 
+enum SHRD_CMD_FLAG {
+	SHRD_CMD_NON,
+	SHRD_CMD_TWRITE_HEADER,
+	SHRD_CMD_TWRITE_DATA,
+	SHRD_CMD_REMAP,
+	SHRD_CMDSPREAD,
+};
+
 struct SHRD_MAP {
 	struct rb_node node;
 	u32 o_addr;
