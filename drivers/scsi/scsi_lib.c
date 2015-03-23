@@ -1773,6 +1773,9 @@ u32 scsi_shrd_init(struct request_queue *q){
 	int idx, rtn = 0;
 	sdev->shrd = NULL;
 
+	sdev_printk(KERN_INFO, sdev, "%s: SHRD start shrd_init\n", __func__);
+
+
 	q->prep_rq_fn = NULL; //in SHRD, prep is saperate from peek.
 	
 	sdev->shrd = (struct SHRD *)kmalloc(sizeof(struct SHRD), GFP_KERNEL);
@@ -2522,10 +2525,13 @@ static void scsi_request_fn(struct request_queue *q)
 			struct SHRD_REMAP *remap_entry;
 			spin_lock_irq(sdev->shrd->rw_log_lock);
 			
-			if(req->cmd_type == REQ_TYPE_BLOCK_PC) //handle former speical function for SHRD
+			if(req->cmd_type == REQ_TYPE_BLOCK_PC){ //handle former speical function for SHRD
+				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle REQ_TYPE_BLOCK_PC request\n", __func__);
 				spin_unlock_irq(sdev->shrd->rw_log_lock);
+			}
 			else if(remap_entry = scsi_shrd_prep_remap_if_need(q)){
 				//need remap?
+				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle try remap\n", __func__);
 				req = scsi_shrd_make_remap_request(q, remap_entry);
 				if(!req){
 					sdev_printk(KERN_INFO, sdev, "%s: SHRD error with make twrite request\n", __func__);
@@ -2533,6 +2539,7 @@ static void scsi_request_fn(struct request_queue *q)
 				spin_unlock_irq(sdev->shrd->rw_log_lock);
 			}
 			else if(twrite_entry = scsi_shrd_prep_rw_twrite(q,req)){
+				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle try twrite\n", __func__);
 				//need twrite?
 				scsi_shrd_packing_rw_twrite(q, twrite_entry);
 				req = scsi_shrd_make_twrite_requests(q, twrite_entry);
@@ -2545,8 +2552,10 @@ static void scsi_request_fn(struct request_queue *q)
 				//read request, need to check whether need to change the address or not.
 				spin_unlock_irq(sdev->shrd->rw_log_lock);
 			}
-			else 	//generic prep procedure (for non_twrite request)
+			else {	//generic prep procedure (for non_twrite request)
+				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle generic write function\n", __func__);
 				spin_unlock_irq(sdev->shrd->rw_log_lock);
+			}
 			
 			scsi_shrd_prep_req(q, req);
 		}

@@ -697,6 +697,8 @@ sdev_store_shrd_enable(struct device *dev, struct device_attribute *attr,
 		if(err){
 			printk("SHRD::shrd init failed\n");
 		}
+		else 
+			printk("SHRD::shrd init succeed\n");
 #endif
 		spin_lock_irq(sdev->request_queue->queue_lock);
 		sdev->request_queue->prep_rq_fn = NULL;
