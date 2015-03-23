@@ -162,6 +162,26 @@ struct SHRD{
 	
 };
 
+static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
+
+	INIT_LIST_HEAD(&entry->req_list);
+	INIT_LIST_HEAD(&entry->twrite_cmd_list);
+	entry->blocks = 0;
+	entry->nr_requests = 0;
+	entry->phys_segments = 0;
+	entry->in_use = 0;
+	memset(entry->twrite_hdr, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
+
+}
+
+static inline void shrd_clear_remap_entry(struct SHRD_REMAP* entry){
+
+	INIT_LIST_HEAD(&entry->remap_cmd_list);
+	entry->in_use = 0;
+	memset(entry->remap_data, 0x00, sizeof(struct SHRD_REMAP_DATA));
+}
+
+
 static inline struct SHRD_TWRITE* shrd_get_twrite_entry(struct SHRD *shrd){
 
 	return list_first_entry_or_null(&shrd->free_twrite_cmd_list, struct SHRD_TWRITE, twrite_cmd_list);
@@ -182,24 +202,10 @@ static inline void shrd_put_remap_entry(struct SHRD *shrd, struct SHRD_REMAP* en
 	list_add_tail(&entry->remap_cmd_list, &shrd->free_remap_cmd_list);
 }
 
-static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
+struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr);
+int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry);
+void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree);
 
-	INIT_LIST_HEAD(&entry->req_list);
-	INIT_LIST_HEAD(&entry->twrite_cmd_list);
-	entry->blocks = 0;
-	entry->nr_requests = 0;
-	entry->phys_segments = 0;
-	entry->in_use = 0;
-	memset(entry->twrite_hdr, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
-
-}
-
-static inline void shrd_clear_remap_entry(struct SHRD_REMAP* entry){
-
-	INIT_LIST_HEAD(&entry->remap_cmd_list);
-	entry->in_use = 0;
-	memset(entry->remap_data, 0x00, sizeof(struct SHRD_REMAP_DATA));
-}
 
 #endif
 #endif

@@ -34,6 +34,7 @@
 #ifdef CONFIG_SCSI_SHRD_TEST0
 #include <linux/rbtree.h>
 #include <scsi/scsi_shrd.h>
+#include "../../block/blk.h"
 #endif
 
 #include <trace/events/scsi.h>
@@ -750,13 +751,13 @@ static bool scsi_end_request(struct request *req, int error,
 		//currently SHRD don't consider about error condition.
 		if(sdev->shrd_on){
 			if( req->shrd_flags == SHRD_REQ_TWRITE_DATA){
-				twrite_entry = (SHRD_TWRITE *)req->shrd_entry;
+				twrite_entry = (struct SHRD_TWRITE *)req->shrd_entry;
 				list_for_each_entry(prq, &twrite_entry->req_list, queuelist){	
 					blk_update_request(prq, 0, blk_rq_bytes(prq));
 				}
 			}
 			else if(req->shrd_flags == SHRD_REQ_REMAP){
-				remap_entry = (SHRD_REMAP *)req->shrd_entry;
+				remap_entry = (struct SHRD_REMAP *)req->shrd_entry;
 				remap_data = &remap_entry->remap_data[0];
 				spin_lock_irq(sdev->shrd->rw_log_lock);
 				for(i = 0; i < remap_data->remap_count; i++){
@@ -1707,7 +1708,7 @@ static void scsi_done(struct scsi_cmnd *cmd)
 //SHRD component
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
-static struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr){
+struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr){
 
 	struct rb_node * node = root->rb_node;
 
@@ -1725,7 +1726,7 @@ static struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr){
 	return NULL;
 }
 
-static int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry){
+int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry){
 
 	struct rb_node **new = &(root->rb_node), *parent = NULL;
 
@@ -1756,7 +1757,7 @@ static int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry
 	
 }
 
-static void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree){
+void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree){
 
 	struct SHRD_MAP *map_entry = scsi_shrd_map_search(tree, oaddr);
 
@@ -1924,7 +1925,6 @@ static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, str
 
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
-	struct scsi_cmnd *cmd;
 	struct SHRD_TWRITE *twrite_entry = NULL;
 	struct request *cur = rq, *next = NULL;
 	bool put_back = true;
@@ -2067,7 +2067,6 @@ static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, str
 	else
 		goto no_pack;
 
-out:
 	return twrite_entry;
 
 no_pack:
@@ -2091,18 +2090,22 @@ static void scsi_shrd_setup_cmd(struct request *req, sector_t block, sector_t th
 	req->cmd[3] = (unsigned char) (block >> 16) & 0xff;
 	req->cmd[4] = (unsigned char) (block >> 8) & 0xff;
 	req->cmd[5] = (unsigned char) block & 0xff;
-	req->cmd[6] = req->cmnd[9] = 0;
+	req->cmd[6] = req->cmd[9] = 0;
 	req->cmd[7] = (unsigned char) (this_count >> 8) & 0xff;
 	req->cmd[8] = (unsigned char) this_count & 0xff;
 	
 }
 
+static void bio_map_kern_endio(struct bio* bio, int err){
+	bio_put(bio);
+}
 
 /*
 	Make twrite command with request data.
 */
 static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *q, struct SHRD_TWRITE *twrite_entry){
 
+	struct scsi_device *sdev = q->queuedata;
 	struct request *req, *prq;
 	struct bio *bio, *pbio;
 	struct bio_vec bvec;
@@ -2110,6 +2113,7 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 	u32 len = 0;
 	u32 start_addr = twrite_entry->twrite_hdr->t_addr_start;
 	u32 idx = start_addr;
+	int ret;
 
 	req = blk_get_request(q, WRITE, GFP_KERNEL);
 
@@ -2135,8 +2139,8 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 
 		for_each_bio(pbio){
 			bio_for_each_segment(bvec, pbio, iter){
-				len = bio_add_pc_page(q, bio, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
-				if(len < bvec->bv_len)
+				len = bio_add_pc_page(q, bio, bvec.bv_page, bvec.bv_len, bvec.bv_offset);
+				if(len < bvec.bv_len)
 					sdev_printk(KERN_INFO, sdev, "%s: bio_add_pc_page failed on request packing\n", __func__);
 			}
 		}
@@ -2153,14 +2157,14 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 		return NULL;
 	}
 
-	if(bio->bi_iter.bio_size != twrite_entry->blocks << 9){
+	if(bio->bi_iter.bi_size != twrite_entry->blocks << 9){
 		sdev_printk(KERN_INFO, sdev, "%s: SHRD bio size is different from twrite_entry->block << 9\n", __func__);
 		blk_put_request(req);
 		bio_put(bio);
 		return NULL;
 	}
 	
-	blk_queue_bounce(q, &rq->bio);
+	blk_queue_bounce(q, &req->bio);
 
 	scsi_shrd_setup_cmd(req, twrite_entry->twrite_hdr->t_addr_start << 3, twrite_entry->blocks, WRITE);
 
@@ -2213,7 +2217,7 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 		bio_put(bio);
 		return NULL;
 	}
-	blk_queue_bounce(q, &rq->bio);
+	blk_queue_bounce(q, &req->bio);
 
 	scsi_shrd_setup_cmd(req, twrite_entry->entry_num * SHRD_NUM_CORES + SHRD_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE, SHRD_SECTORS_PER_PAGE * SHRD_NUM_CORES, WRITE);
 
@@ -2237,7 +2241,6 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 */
 static struct request *scsi_shrd_make_twrite_requests(struct request_queue *q, struct SHRD_TWRITE *twrite_entry){
 
-	struct scsi_device *sdev = q->queuedata;
 	struct request *header, *data;
 
 	header = scsi_shrd_make_twrite_header_request(q, twrite_entry);
@@ -2275,7 +2278,7 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 
 	idx = header->t_addr_start;
 
-	end = header->t_addr_start + sectors >> 3;
+	end = header->t_addr_start + (sectors >> 3);
 
 	if(end >= SHRD_RW_LOG_START_IN_PAGE)
 		end -= SHRD_RW_LOG_SIZE_IN_PAGE;
@@ -2351,7 +2354,7 @@ struct scsi_device *sdev = q->queuedata;
 		bio_put(bio);
 		return NULL;
 	}
-	blk_queue_bounce(q, &rq->bio);
+	blk_queue_bounce(q, &req->bio);
 
 	scsi_shrd_setup_cmd(req, remap_entry->entry_num * SHRD_NUM_CORES + SHRD_REMAP_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE, SHRD_SECTORS_PER_PAGE * SHRD_NUM_CORES, WRITE);
 
@@ -2398,9 +2401,9 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	if(end_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		end_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
 
-	entry->remap_data[0].t_addr_start = start_idx;
-	entry->remap_data[0].t_addr_end = end_idx;
-	entry->remap_data[0].remap_count = cnt;
+	entry->remap_data[0]->t_addr_start = start_idx;
+	entry->remap_data[0]->t_addr_end = end_idx;
+	entry->remap_data[0]->remap_count = cnt;
 
 	idx = 0;
 
