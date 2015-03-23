@@ -106,11 +106,6 @@ struct scsi_cmnd {
 	struct request *request;	/* The command we are
 				   	   working on */
 
-#ifdef CONFIG_SCSI_SHRD_TEST0
-	u8 shrd_flags; //denotes this cmnd is twrite header, data, remap or special read cmnd.
-	void *shrd_entry; //according to the shrd_flags, this entry can be SHRD_TWRITE or SHRD_REMAP
-#endif
-
 #define SCSI_SENSE_BUFFERSIZE 	96
 	unsigned char *sense_buffer;
 				/* obtained by REQUEST SENSE when

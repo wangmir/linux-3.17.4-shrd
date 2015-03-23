@@ -58,12 +58,12 @@ enum SHRD_MAP_FLAG {
 	SHRD_REMAPPING_MAP, //when the read request is arrived, the corresponding data is in remapping state, then 1) send o_addr read, 2) wait (what is correct?)
 };
 
-enum SHRD_CMD_FLAG {
-	SHRD_CMD_NON,
-	SHRD_CMD_TWRITE_HEADER,
-	SHRD_CMD_TWRITE_DATA,
-	SHRD_CMD_REMAP,
-	SHRD_CMDSPREAD,
+enum SHRD_REQ_FLAG {
+	SHRD_REQ_NON,
+	SHRD_REQ_TWRITE_HEADER,
+	SHRD_REQ_TWRITE_DATA,
+	SHRD_REQ_REMAP,
+	SHRD_REQ_SPREAD,
 };
 
 struct SHRD_MAP {
@@ -168,7 +168,7 @@ static inline struct SHRD_TWRITE* shrd_get_twrite_entry(struct SHRD *shrd){
 }
 
 static inline void shrd_put_twrite_entry(struct SHRD *shrd, struct SHRD_TWRITE* entry){
-
+	shrd_clear_twrite_entry(entry);
 	list_add_tail(&entry->twrite_cmd_list, &shrd->free_twrite_cmd_list);
 }
 
@@ -178,6 +178,7 @@ static inline struct SHRD_REMAP* shrd_get_remap_entry(struct SHRD *shrd){
 }
 
 static inline void shrd_put_remap_entry(struct SHRD *shrd, struct SHRD_REMAP* entry){
+	shrd_clear_remap_entry(entry);
 	list_add_tail(&entry->remap_cmd_list, &shrd->free_remap_cmd_list);
 }
 
@@ -187,7 +188,9 @@ static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 	INIT_LIST_HEAD(&entry->twrite_cmd_list);
 	entry->blocks = 0;
 	entry->nr_requests = 0;
+	entry->phys_segments = 0;
 	entry->in_use = 0;
+	memset(entry->twrite_hdr, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
 
 }
 
@@ -195,6 +198,7 @@ static inline void shrd_clear_remap_entry(struct SHRD_REMAP* entry){
 
 	INIT_LIST_HEAD(&entry->remap_cmd_list);
 	entry->in_use = 0;
+	memset(entry->remap_data, 0x00, sizeof(struct SHRD_REMAP_DATA));
 }
 
 #endif
