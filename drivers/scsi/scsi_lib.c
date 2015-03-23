@@ -758,7 +758,7 @@ static bool scsi_end_request(struct request *req, int error,
 			}
 			else if(req->shrd_flags == SHRD_REQ_REMAP){
 				remap_entry = (struct SHRD_REMAP *)req->shrd_entry;
-				remap_data = &remap_entry->remap_data[0];
+				remap_data = remap_entry->remap_data[0];
 				spin_lock_irq(sdev->shrd->rw_log_lock);
 				for(i = 0; i < remap_data->remap_count; i++){
 					scsi_shrd_map_remove(remap_data->o_addr[i], &sdev->shrd->rw_mapping);
@@ -1767,7 +1767,7 @@ void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree){
 	}
 }
 
-static u32 scsi_shrd_init(struct request_queue *q){
+u32 scsi_shrd_init(struct request_queue *q){
 
 	struct scsi_device *sdev = q->queuedata;
 	int idx, rtn = 0;
@@ -2441,11 +2441,10 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	return 1: remap
 	return -1: err
 */
-static struct request * scsi_shrd_prep_remap_if_need(struct request_queue *q){
+static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
-	struct scsi_cmnd *cmd;
 	struct SHRD_REMAP *remap_entry;
 	u32 start_idx = shrd->rw_log_start_idx;
 	u32 new_idx = shrd->rw_log_new_idx;
@@ -2925,13 +2924,6 @@ struct request_queue *scsi_alloc_queue(struct scsi_device *sdev)
 	blk_queue_softirq_done(q, scsi_softirq_done);
 	blk_queue_rq_timed_out(q, scsi_times_out);
 	blk_queue_lld_busy(q, scsi_lld_busy);
-
-#ifdef CONFIG_SCSI_SHRD_TEST0
-	rtn = scsi_shrd_init(q);
-	if(rtn){
-		printk("SHRD::shrd init failed\n");
-	}
-#endif
 
 	return q;
 }

@@ -23,6 +23,10 @@
 #include "scsi_priv.h"
 #include "scsi_logging.h"
 
+#ifdef CONFIG_SCSI_SHRD_TEST0
+#include <scsi/scsi_shrd.h>
+#endif
+
 static struct device_type scsi_dev_type;
 
 static const struct {
@@ -687,6 +691,13 @@ sdev_store_shrd_enable(struct device *dev, struct device_attribute *attr,
 		return err;
 	sdev->shrd_on = shrd_on;
 	if(shrd_on == 1){
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
+		err = scsi_shrd_init(sdev->request_queue);
+		if(err){
+			printk("SHRD::shrd init failed\n");
+		}
+#endif
 		spin_lock_irq(sdev->request_queue->queue_lock);
 		sdev->request_queue->prep_rq_fn = NULL;
 		spin_unlock_irq(sdev->request_queue->queue_lock);

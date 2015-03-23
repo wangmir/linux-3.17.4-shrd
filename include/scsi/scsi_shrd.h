@@ -202,6 +202,7 @@ static inline void shrd_put_remap_entry(struct SHRD *shrd, struct SHRD_REMAP* en
 	list_add_tail(&entry->remap_cmd_list, &shrd->free_remap_cmd_list);
 }
 
+u32 scsi_shrd_init(struct request_queue *q);
 struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr);
 int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry);
 void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree);
