@@ -35,6 +35,7 @@
 #include <linux/rbtree.h>
 #include <scsi/scsi_shrd.h>
 #include "../../block/blk.h"
+
 #endif
 
 #include <trace/events/scsi.h>
@@ -1730,6 +1731,7 @@ int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry){
 
 	struct rb_node **new = &(root->rb_node), *parent = NULL;
 
+
 	while (*new){
 		struct SHRD_MAP *this = container_of(*new, struct SHRD_MAP, node);
 
@@ -1760,7 +1762,6 @@ int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry){
 void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree){
 
 	struct SHRD_MAP *map_entry = scsi_shrd_map_search(tree, oaddr);
-
 	if(map_entry){
 		rb_erase(&map_entry->node, tree);
 		memset(map_entry, 0x00, sizeof(struct SHRD_MAP));
@@ -1954,7 +1955,7 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 		goto no_pack;
 	if(blk_rq_sectors(rq) > SHRD_RW_THRESHOLD_IN_SECTOR)
 		goto no_pack;
-	if(blk_rq_sectors(next) < SHRD_SECTORS_PER_PAGE) //under 4KB write is not the common write situation.
+	if(blk_rq_sectors(rq) < SHRD_SECTORS_PER_PAGE) //under 4KB write is not the common write situation.
 		goto no_pack;
 	
 	max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
@@ -2075,6 +2076,7 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 	}
 	else
 		goto no_pack;
+
 
 	if(twrite_entry != NULL)
 		return 1;
@@ -2550,7 +2552,7 @@ static void scsi_request_fn(struct request_queue *q)
 			else if(scsi_shrd_prep_remap_if_need(q, remap_entry)){
 				//need remap?
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle try remap\n", __func__);
-				//req = scsi_shrd_make_remap_request(q, remap_entry);
+				req = scsi_shrd_make_remap_request(q, remap_entry);
 				if(!req){
 					sdev_printk(KERN_INFO, sdev, "%s: SHRD error with make twrite request\n", __func__);
 				}
@@ -2559,8 +2561,8 @@ static void scsi_request_fn(struct request_queue *q)
 			else if(scsi_shrd_prep_rw_twrite(q,req, twrite_entry)){
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle try twrite\n", __func__);
 				//need twrite?
-				//scsi_shrd_packing_rw_twrite(q, twrite_entry);
-				//req = scsi_shrd_make_twrite_requests(q, twrite_entry);
+				scsi_shrd_packing_rw_twrite(q, twrite_entry);
+				req = scsi_shrd_make_twrite_requests(q, twrite_entry);
 				if(!req){
 					sdev_printk(KERN_INFO, sdev, "%s: SHRD error with make twrite request\n", __func__);
 				}
@@ -2582,7 +2584,6 @@ static void scsi_request_fn(struct request_queue *q)
 		}
 		
 #endif
-
 		if (unlikely(!scsi_device_online(sdev))) {
 			sdev_printk(KERN_ERR, sdev,
 				    "rejecting I/O to offline device\n");
@@ -2598,13 +2599,15 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
 			blk_start_request(req);
-		
+
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
 			if(req->shrd_flags == SHRD_REQ_TWRITE_DATA){
 				//we need to consider more about starting packed requests at 1) sending header or 2) sending data of twrite
 				struct SHRD_TWRITE *entry = (struct SHRD_TWRITE *)req->shrd_entry;
 				struct request *prq;
+
+				sdev_printk(KERN_INFO, sdev, "%s: start listed request", __func__);
 
 				list_for_each_entry(prq, &entry->req_list, queuelist){
 					if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, prq)))
@@ -2660,6 +2663,7 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		cmd->scsi_done = scsi_done;
 		rtn = scsi_dispatch_cmd(cmd);
+		
 		if (rtn) {
 			scsi_queue_insert(cmd, rtn);
 			spin_lock_irq(q->queue_lock);
