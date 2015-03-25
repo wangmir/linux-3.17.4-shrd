@@ -1884,7 +1884,10 @@ fin:
 */
 static void scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 
+	struct scsi_device *sdev = q->queuedata;
 	int ret;
+
+	sdev_printk(KERN_INFO, sdev, "%s: prep_req start\n", __func__);
 	
 	ret = scsi_prep_fn(q, rq);
 	if (ret == BLKPREP_OK) {
@@ -1924,11 +1927,10 @@ static void scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 /*
 	Prep function for random write packing into twrite
 */
-static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq){
+static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq, struct SHRD_TWRITE *twrite_entry){
 
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
-	struct SHRD_TWRITE *twrite_entry = NULL;
 	struct request *cur = rq, *next = NULL;
 	bool put_back = true;
 	u8 reqs = 0;
@@ -1937,6 +1939,8 @@ static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, str
 	u32 phys_segments = 0;
 	u32 log_addr;
 	int ret;
+
+	sdev_printk(KERN_INFO, sdev, "%s: twrite prep start\n", __func__);
 
 	ret = scsi_prep_state_check(sdev, rq);
 	if(ret != BLKPREP_OK)
@@ -1987,8 +1991,6 @@ static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, str
 			goto no_pack;
 	}
 	
-	
-	
 	//need to consider padding
 	if((log_addr & 0x1) != ((blk_rq_pos(cur) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 		//not aligned, need to pad
@@ -2018,6 +2020,8 @@ static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, str
 		}
 
 		next = blk_peek_request(q);
+
+		sdev_printk(KERN_INFO, sdev, "%s: blk_peek_request succeed\n", __func__);
 
 		if(!next){
 			put_back = false;
@@ -2070,10 +2074,11 @@ static struct SHRD_TWRITE* scsi_shrd_prep_rw_twrite(struct request_queue *q, str
 	else
 		goto no_pack;
 
-	return twrite_entry;
+	if(twrite_entry != NULL)
+		return 1;
 
 no_pack:
-	return NULL;
+	return 0;
 }
 
 static void scsi_shrd_setup_cmd(struct request *req, sector_t block, sector_t this_count, u8 direction){
@@ -2382,10 +2387,14 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	struct SHRD_REMAP *entry;
 	u32 start_idx = shrd->rw_log_start_idx, end_idx;
 	u32 idx = 0, cnt = 0;
+
+	sdev_printk(KERN_INFO, sdev, "%s: do_remap\n", __func__);
 	
 	entry = shrd_get_remap_entry(shrd);
-	if(entry == NULL)
+	if(entry == NULL){
+		sdev_printk(KERN_INFO, sdev, "%s: has no remap entry\n", __func__);
 		return NULL;
+	}
 	shrd_clear_remap_entry(entry);
 
 	for(idx = 0; idx < size; idx++){
@@ -2444,24 +2453,29 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	return 1: remap
 	return -1: err
 */
-static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
+static u32 scsi_shrd_prep_remap_if_need(struct request_queue *q, struct SHRD_REMAP* remap_entry){
 
 	struct scsi_device *sdev = q->queuedata;
 	struct SHRD *shrd = sdev->shrd;
-	struct SHRD_REMAP *remap_entry;
 	u32 start_idx = shrd->rw_log_start_idx;
 	u32 new_idx = shrd->rw_log_new_idx;
 	u32 size; //used log size
+
+	sdev_printk(KERN_INFO, sdev, "%s: remap prep start\n", __func__);
 
 	(new_idx > start_idx) ? (size = new_idx - start_idx) : (size = SHRD_RW_LOG_SIZE_IN_PAGE - start_idx + new_idx);
 
 	if(size > SHRD_RW_REMAP_THRESHOLD_IN_PAGE){
 		//need to remap
+		sdev_printk(KERN_INFO, sdev, "%s: remap is needed\n", __func__);
 		remap_entry = __scsi_shrd_do_remap_rw_log(q, size);
-		return remap_entry;
+		sdev_printk(KERN_INFO, sdev, "%s: return valid remap entry\n", __func__);
 	}
-	else
-		return NULL;
+
+	if(remap_entry !=NULL)
+		return 1;
+	return 0;
+	
 	
 }
 
@@ -2521,46 +2535,48 @@ static void scsi_request_fn(struct request_queue *q)
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
-			struct SHRD_TWRITE *twrite_entry;
-			struct SHRD_REMAP *remap_entry;
-			spin_lock_irq(sdev->shrd->rw_log_lock);
+			BUG_ON(!sdev->shrd);
+			struct SHRD_TWRITE *twrite_entry = NULL;
+			struct SHRD_REMAP *remap_entry = NULL;
+			//spin_lock_irq(sdev->shrd->rw_log_lock);
 			
 			if(req->cmd_type == REQ_TYPE_BLOCK_PC){ //handle former speical function for SHRD
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle REQ_TYPE_BLOCK_PC request\n", __func__);
-				spin_unlock_irq(sdev->shrd->rw_log_lock);
+				//spin_unlock_irq(sdev->shrd->rw_log_lock);
 			}
-			else if(remap_entry = scsi_shrd_prep_remap_if_need(q)){
+			else if(scsi_shrd_prep_remap_if_need(q, remap_entry)){
 				//need remap?
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle try remap\n", __func__);
-				req = scsi_shrd_make_remap_request(q, remap_entry);
+				//req = scsi_shrd_make_remap_request(q, remap_entry);
 				if(!req){
 					sdev_printk(KERN_INFO, sdev, "%s: SHRD error with make twrite request\n", __func__);
 				}
-				spin_unlock_irq(sdev->shrd->rw_log_lock);
+				//spin_unlock_irq(sdev->shrd->rw_log_lock);
 			}
-			else if(twrite_entry = scsi_shrd_prep_rw_twrite(q,req)){
+			else if(scsi_shrd_prep_rw_twrite(q,req, twrite_entry)){
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle try twrite\n", __func__);
 				//need twrite?
-				scsi_shrd_packing_rw_twrite(q, twrite_entry);
-				req = scsi_shrd_make_twrite_requests(q, twrite_entry);
+				//scsi_shrd_packing_rw_twrite(q, twrite_entry);
+				//req = scsi_shrd_make_twrite_requests(q, twrite_entry);
 				if(!req){
 					sdev_printk(KERN_INFO, sdev, "%s: SHRD error with make twrite request\n", __func__);
 				}
-				spin_unlock_irq(sdev->shrd->rw_log_lock);
+				//spin_unlock_irq(sdev->shrd->rw_log_lock);
 			}
 			else if(!rq_data_dir(req)){
 				//read request, need to check whether need to change the address or not.
-				spin_unlock_irq(sdev->shrd->rw_log_lock);
+				//spin_unlock_irq(sdev->shrd->rw_log_lock);
 			}
 			else {	//generic prep procedure (for non_twrite request)
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle generic write function\n", __func__);
-				spin_unlock_irq(sdev->shrd->rw_log_lock);
+				//spin_unlock_irq(sdev->shrd->rw_log_lock);
 			}
 			
 			scsi_shrd_prep_req(q, req);
 		}
-		else
+		else{
 			scsi_shrd_prep_req(q, req);
+		}
 		
 #endif
 

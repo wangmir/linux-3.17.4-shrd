@@ -683,13 +683,14 @@ sdev_store_shrd_enable(struct device *dev, struct device_attribute *attr,
 		    const char *buf, size_t count)
 {
 	struct scsi_device *sdev;
-	unsigned int  shrd_on;
+	unsigned int  shrd_on = 32;
 	int err;
 	sdev = to_scsi_device(dev);
 	err = kstrtouint(buf, 10, &shrd_on);
 	if(err)
 		return err;
 	sdev->shrd_on = shrd_on;
+	printk("sdev_store_shrd_enable called, shrd_on is %d\n", shrd_on);
 	if(shrd_on == 1){
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
