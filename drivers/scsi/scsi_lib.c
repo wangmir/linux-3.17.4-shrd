@@ -1887,7 +1887,8 @@ static void scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 	struct scsi_device *sdev = q->queuedata;
 	int ret;
 
-	sdev_printk(KERN_INFO, sdev, "%s: prep_req start\n", __func__);
+	if(sdev->shrd_on)
+		sdev_printk(KERN_INFO, sdev, "%s: prep_req start\n", __func__);
 	
 	ret = scsi_prep_fn(q, rq);
 	if (ret == BLKPREP_OK) {
@@ -2008,6 +2009,7 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 	twrite_entry = shrd_get_twrite_entry(shrd);
 	if(twrite_entry == NULL)
 		goto no_pack;
+	list_del(&twrite_entry->twrite_cmd_list);
 	shrd_clear_twrite_entry(twrite_entry);
 
 	log_addr = shrd->rw_log_new_idx;
@@ -2395,6 +2397,7 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 		sdev_printk(KERN_INFO, sdev, "%s: has no remap entry\n", __func__);
 		return NULL;
 	}
+	list_del(&entry->remap_cmd_list);
 	shrd_clear_remap_entry(entry);
 
 	for(idx = 0; idx < size; idx++){
@@ -2463,11 +2466,11 @@ static u32 scsi_shrd_prep_remap_if_need(struct request_queue *q, struct SHRD_REM
 
 	sdev_printk(KERN_INFO, sdev, "%s: remap prep start\n", __func__);
 
-	(new_idx > start_idx) ? (size = new_idx - start_idx) : (size = SHRD_RW_LOG_SIZE_IN_PAGE - start_idx + new_idx);
+	(new_idx >= start_idx) ? (size = new_idx - start_idx) : (size = SHRD_RW_LOG_SIZE_IN_PAGE - start_idx + new_idx);
 
 	if(size > SHRD_RW_REMAP_THRESHOLD_IN_PAGE){
 		//need to remap
-		sdev_printk(KERN_INFO, sdev, "%s: remap is needed\n", __func__);
+		sdev_printk(KERN_INFO, sdev, "%s: remap is needed, size %d\n", __func__, size);
 		remap_entry = __scsi_shrd_do_remap_rw_log(q, size);
 		sdev_printk(KERN_INFO, sdev, "%s: return valid remap entry\n", __func__);
 	}
