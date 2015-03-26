@@ -766,7 +766,7 @@ static bool scsi_end_request(struct request *req, int error,
 					scsi_shrd_map_remove(remap_data->o_addr[i], &sdev->shrd->rw_mapping);
 				}
 				sdev->shrd->rw_log_start_idx = remap_data->t_addr_end + 1;
-				if(sdev->shrd->rw_log_start_idx >= SHRD_RW_LOG_START_IN_PAGE + SHRD_RW_LOG_SIZE_IN_PAGE)
+				if(sdev->shrd->rw_log_start_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 					sdev->shrd->rw_log_start_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
 				shrd_put_remap_entry(sdev->shrd, remap_entry);
 				//spin_unlock_irq(sdev->shrd->rw_log_lock);
@@ -2309,16 +2309,16 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 	//fill header with data
 
 	//t_addr_start is determined as 
-	header->t_addr_start = shrd->rw_log_new_idx;
+	header->t_addr_start = shrd->rw_log_new_idx + SHRD_RW_LOG_START_IN_PAGE;
 	header->io_count = twrite_entry->blocks / SHRD_SECTORS_PER_PAGE;
 
 	sdev_printk(KERN_INFO, sdev, "%s: packing start, twrite, block: %d, reqs:%d, seg:%d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 
-	idx = header->t_addr_start;
+	idx = shrd->rw_log_new_idx;
 
-	end = header->t_addr_start + (sectors >> 3);
+	end = shrd->rw_log_new_idx + (sectors >> 3);
 
-	if(end >= SHRD_RW_LOG_START_IN_PAGE)
+	if(end >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		end -= SHRD_RW_LOG_SIZE_IN_PAGE;
 	
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
@@ -2333,17 +2333,17 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 			header->o_addr[idx] = SHRD_INVALID_LPN;
 			idx++;
 
-			if(idx >= SHRD_RW_LOG_START_IN_PAGE)
+			if(idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 				idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
 		}
 
 		for(i = 0; i < blk_rq_sectors(prq) / SHRD_SECTORS_PER_PAGE; i++){
 			header->o_addr[idx] = blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE + i;
 			
-			shrd->shrd_rw_map[header->t_addr_start + idx].t_addr = header->t_addr_start + idx;
-			shrd->shrd_rw_map[header->t_addr_start + idx].o_addr = header->o_addr[idx];
-			shrd->shrd_rw_map[header->t_addr_start + idx].flags = SHRD_VALID_MAP;
-			scsi_shrd_map_insert(&shrd->rw_mapping, &shrd->shrd_rw_map[header->t_addr_start + idx]);
+			shrd->shrd_rw_map[idx].t_addr = header->t_addr_start + idx;
+			shrd->shrd_rw_map[idx].o_addr = header->o_addr[idx];
+			shrd->shrd_rw_map[idx].flags = SHRD_VALID_MAP;
+			scsi_shrd_map_insert(&shrd->rw_mapping, &shrd->shrd_rw_map[idx]);
 
 			idx++;
 			if(idx >= SHRD_RW_LOG_START_IN_PAGE)
