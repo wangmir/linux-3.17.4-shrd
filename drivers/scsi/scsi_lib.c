@@ -1887,9 +1887,6 @@ static void scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 
 	struct scsi_device *sdev = q->queuedata;
 	int ret;
-
-	if(sdev->shrd_on)
-		sdev_printk(KERN_INFO, sdev, "%s: prep_req start\n", __func__);
 	
 	ret = scsi_prep_fn(q, rq);
 	if (ret == BLKPREP_OK) {
@@ -1942,21 +1939,31 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 	u32 log_addr;
 	int ret;
 
-	sdev_printk(KERN_INFO, sdev, "%s: twrite prep start\n", __func__);
-
 	ret = scsi_prep_state_check(sdev, rq);
-	if(ret != BLKPREP_OK)
+	if(ret != BLKPREP_OK){
+		sdev_printk(KERN_INFO, sdev, "%s: nopack because of BLKPREP_OK\n", __func__);
 		goto no_pack;
-	if(!(rq->cmd_flags & REQ_WRITE))
+	}
+	if(!(rq->cmd_flags & REQ_WRITE)){
+		sdev_printk(KERN_INFO, sdev, "%s: nopack because of read request\n", __func__);
 		goto no_pack;
-	if(rq->cmd_flags & REQ_DISCARD || rq->cmd_flags & REQ_FLUSH  || rq->cmd_flags & REQ_FUA)
+	}
+	if(rq->cmd_flags & REQ_DISCARD || rq->cmd_flags & REQ_FLUSH  || rq->cmd_flags & REQ_FUA){
+		sdev_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush,fua\n", __func__);
 		goto no_pack;
-	if(rq->cmd_flags & REQ_WRITE_SAME)
+	}
+	if(rq->cmd_flags & REQ_WRITE_SAME){
+		sdev_printk(KERN_INFO, sdev, "%s: nopack because of REQ_WRITE_SAME\n", __func__);
 		goto no_pack;
-	if(blk_rq_sectors(rq) > SHRD_RW_THRESHOLD_IN_SECTOR)
+	}
+	if(blk_rq_sectors(rq) > SHRD_RW_THRESHOLD_IN_SECTOR){
+		sdev_printk(KERN_INFO, sdev, "%s: nopack because of sequential write\n", __func__);
 		goto no_pack;
-	if(blk_rq_sectors(rq) < SHRD_SECTORS_PER_PAGE) //under 4KB write is not the common write situation.
+	}
+	if(blk_rq_sectors(rq) < SHRD_SECTORS_PER_PAGE){ //under 4KB write is not the common write situation.
+		sdev_printk(KERN_INFO, sdev, "%s: nopack because of tiny requests\n", __func__);
 		goto no_pack;
+	}
 	
 	max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
 	req_sectors += blk_rq_sectors(cur);
@@ -1966,7 +1973,7 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 	//if there are not enough space (512KB), we can choose from two options. 1) packing small size, 2) move to log start addr
 	//
 
-	if(shrd->rw_log_new_idx > shrd->rw_log_start_idx){
+	if(shrd->rw_log_new_idx >= shrd->rw_log_start_idx){
 		//in here, rw log can goto log start when there are "enough space to allocate twrite".
 		if((SHRD_RW_LOG_SIZE_IN_PAGE - shrd->rw_log_new_idx) >= SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE){
 			//there are enough space in the tail of log. 
@@ -1979,8 +1986,10 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 			if(shrd->rw_log_start_idx >= SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR){
 				shrd->rw_log_new_idx = 0; //goto log end because enoulgh slot is presented.
 			}
-			else
+			else{
+				sdev_printk(KERN_INFO, sdev, "%s: nopack because log is full1\n", __func__);
 				goto no_pack; //log is full, don't packed.
+			}
 		}
 	}
 	else{
@@ -1989,8 +1998,10 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 			if(max_packed_rw > SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR)
 				max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
 		}
-		else
+		else{
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because log is full2\n", __func__);
 			goto no_pack;
+		}
 	}
 	
 	//need to consider padding
@@ -1998,6 +2009,7 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 		//not aligned, need to pad
 		if(req_sectors + 1 > max_packed_rw){
 			req_sectors -= blk_rq_sectors(cur);
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of padding\n", __func__);
 			goto no_pack;
 		}
 		else{
@@ -2008,8 +2020,10 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 	
 	//we need to get a empty twrite cmd entry
 	twrite_entry = shrd_get_twrite_entry(shrd);
-	if(twrite_entry == NULL)
+	if(twrite_entry == NULL){
+		sdev_printk(KERN_INFO, sdev, "%s: nopack because of NULL twrite\n", __func__);
 		goto no_pack;
+	}
 	list_del(&twrite_entry->twrite_cmd_list);
 	shrd_clear_twrite_entry(twrite_entry);
 
@@ -2027,6 +2041,7 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 		sdev_printk(KERN_INFO, sdev, "%s: blk_peek_request succeed\n", __func__);
 
 		if(!next){
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of noreq\n", __func__);
 			put_back = false;
 			break;
 		}
@@ -2037,8 +2052,10 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 		if(rq_data_dir(cur) != rq_data_dir(next))
 			break;
 
-		if(blk_rq_sectors(next) > SHRD_RW_THRESHOLD_IN_SECTOR)
+		if(blk_rq_sectors(next) > SHRD_RW_THRESHOLD_IN_SECTOR){
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of large next\n", __func__);
 			break;
+		}
 		
 		if(blk_rq_sectors(next) < SHRD_SECTORS_PER_PAGE) //under 4KB write is not the common write situation.
 			break;
@@ -2074,12 +2091,15 @@ static u32 scsi_shrd_prep_rw_twrite(struct request_queue *q, struct request *rq,
 		twrite_entry->blocks = req_sectors;
 		twrite_entry->phys_segments = phys_segments;
 	}
-	else
+	else{
+		sdev_printk(KERN_INFO, sdev, "%s: nopack because there are no requests to pack\n", __func__);
 		goto no_pack;
+	}
 
-
-	if(twrite_entry != NULL)
+	if(twrite_entry != NULL){
+		sdev_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d\n", __func__, twrite_entry->entry_num);
 		return 1;
+	}
 
 no_pack:
 	return 0;
@@ -2466,13 +2486,10 @@ static u32 scsi_shrd_prep_remap_if_need(struct request_queue *q, struct SHRD_REM
 	u32 new_idx = shrd->rw_log_new_idx;
 	u32 size; //used log size
 
-	sdev_printk(KERN_INFO, sdev, "%s: remap prep start\n", __func__);
-
 	(new_idx >= start_idx) ? (size = new_idx - start_idx) : (size = SHRD_RW_LOG_SIZE_IN_PAGE - start_idx + new_idx);
 
 	if(size > SHRD_RW_REMAP_THRESHOLD_IN_PAGE){
 		//need to remap
-		sdev_printk(KERN_INFO, sdev, "%s: remap is needed, size %d\n", __func__, size);
 		remap_entry = __scsi_shrd_do_remap_rw_log(q, size);
 		sdev_printk(KERN_INFO, sdev, "%s: return valid remap entry\n", __func__);
 	}
@@ -2569,6 +2586,7 @@ static void scsi_request_fn(struct request_queue *q)
 				//spin_unlock_irq(sdev->shrd->rw_log_lock);
 			}
 			else if(!rq_data_dir(req)){
+				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle generic read function\n", __func__);
 				//read request, need to check whether need to change the address or not.
 				//spin_unlock_irq(sdev->shrd->rw_log_lock);
 			}
