@@ -765,7 +765,7 @@ static bool scsi_end_request(struct request *req, int error,
 				for(i = 0; i < remap_data->remap_count; i++){
 					scsi_shrd_map_remove(remap_data->o_addr[i], &sdev->shrd->rw_mapping);
 				}
-				sdev->shrd->rw_log_start_idx = remap_data->t_addr_end + 1;
+				sdev->shrd->rw_log_start_idx = remap_data->t_addr_end + 1 - SHRD_RW_LOG_START_IN_PAGE;
 				if(sdev->shrd->rw_log_start_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 					sdev->shrd->rw_log_start_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
 				shrd_put_remap_entry(sdev->shrd, remap_entry);
@@ -2338,10 +2338,13 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 		}
 
 		for(i = 0; i < blk_rq_sectors(prq) / SHRD_SECTORS_PER_PAGE; i++){
+			
 			header->o_addr[idx] = blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE + i;
 			
-			shrd->shrd_rw_map[idx].t_addr = header->t_addr_start + idx;
+			shrd->shrd_rw_map[idx].t_addr = SHRD_RW_LOG_START_IN_PAGE+ idx;
 			shrd->shrd_rw_map[idx].o_addr = header->o_addr[idx];
+			
+			BUG_ON(shrd->shrd_rw_map[idx].flags == SHRD_VALID_MAP); //should be remapped
 			shrd->shrd_rw_map[idx].flags = SHRD_VALID_MAP;
 			scsi_shrd_map_insert(&shrd->rw_mapping, &shrd->shrd_rw_map[idx]);
 
@@ -2353,9 +2356,6 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 	sdev_printk(KERN_INFO, sdev, "%s: packing end, log idx (%d) is changed to %d\n", __func__, shrd->rw_log_new_idx, idx);
 	shrd->rw_log_new_idx = idx;
 
-	//test
-	BUG();
-	
 }
 
 static struct request * scsi_shrd_make_remap_request(struct request_queue *q, struct SHRD_REMAP *remap_entry){
@@ -2447,8 +2447,8 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	if(end_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		end_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
 
-	entry->remap_data[0]->t_addr_start = start_idx;
-	entry->remap_data[0]->t_addr_end = end_idx;
+	entry->remap_data[0]->t_addr_start = start_idx + SHRD_RW_LOG_START_IN_PAGE;
+	entry->remap_data[0]->t_addr_end = end_idx + SHRD_RW_LOG_START_IN_PAGE;
 	entry->remap_data[0]->remap_count = cnt;
 
 	idx = 0;

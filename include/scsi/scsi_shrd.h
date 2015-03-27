@@ -53,13 +53,13 @@
 #define SHRD_INVALID_LPN 0x7fffffff
 
 enum SHRD_MAP_FLAG {
-	SHRD_INVALID_MAP,
+	SHRD_INVALID_MAP = 0,
 	SHRD_VALID_MAP,
 	SHRD_REMAPPING_MAP, //when the read request is arrived, the corresponding data is in remapping state, then 1) send o_addr read, 2) wait (what is correct?)
 };
 
 enum SHRD_REQ_FLAG {
-	SHRD_REQ_NON,
+	SHRD_REQ_NON = 0,
 	SHRD_REQ_TWRITE_HEADER,
 	SHRD_REQ_TWRITE_DATA,
 	SHRD_REQ_REMAP,
@@ -136,6 +136,7 @@ struct SHRD{
 	struct list_head free_remap_cmd_list;
 
 	//for each index indicator for write and remap, should acquire lock to handle each entries.
+	//idx represents the index within log area, thus plz use this with SHRD_RW_LOG_START_IN_PAGE when calculate exact address.
 	u32 rw_log_start_idx;
 	u32 rw_log_new_idx;
 	u32 rw_log_valid_count;
