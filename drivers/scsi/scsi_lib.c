@@ -1942,6 +1942,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	u32 max_packed_rw = 0;
 	u32 req_sectors = 0;
 	u32 phys_segments = 0;
+	u32 padding = 0;
 	u32 log_addr;
 	int ret;
 
@@ -2009,11 +2010,13 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			goto no_pack;
 		}
 	}
+
+	log_addr = shrd->rw_log_new_idx;
 	
 	//need to consider padding
 	if((log_addr & 0x1) != ((blk_rq_pos(cur) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 		//not aligned, need to pad
-		if(req_sectors + 1 > max_packed_rw){
+		if(req_sectors + SHRD_SECTORS_PER_PAGE > max_packed_rw){
 			req_sectors -= blk_rq_sectors(cur);
 			sdev_printk(KERN_INFO, sdev, "%s: nopack because of padding\n", __func__);
 			goto no_pack;
@@ -2021,8 +2024,11 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		else{
 			req_sectors += SHRD_SECTORS_PER_PAGE;
 			phys_segments++;
+			padding++;
+			log_addr++;
 		}
 	}
+	log_addr += blk_rq_sectors(cur) / SHRD_SECTORS_PER_PAGE;
 	
 	//we need to get a empty twrite cmd entry
 	twrite_entry = shrd_get_twrite_entry(shrd);
@@ -2032,8 +2038,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	}
 	list_del(&twrite_entry->twrite_cmd_list);
 	shrd_clear_twrite_entry(twrite_entry);
-
-	log_addr = shrd->rw_log_new_idx;
+	
 	
 	//write request fetch start
 	do{
@@ -2042,9 +2047,9 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 
-		next = blk_peek_request(q);
+		next = blk_fetch_request(q); //we need to start the request in order to get next request
 
-		sdev_printk(KERN_INFO, sdev, "%s: blk_peek_request succeed\n", __func__);
+		//sdev_printk(KERN_INFO, sdev, "%s: blk_peek_request succeed\n", __func__);
 
 		if(!next){
 			sdev_printk(KERN_INFO, sdev, "%s: nopack because of noreq\n", __func__);
@@ -2052,11 +2057,15 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 
-		if(next->cmd_flags & REQ_DISCARD || next->cmd_flags & REQ_FLUSH || next->cmd_flags & REQ_FUA)
+		if(next->cmd_flags & REQ_DISCARD || next->cmd_flags & REQ_FLUSH || next->cmd_flags & REQ_FUA){
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush, fua\n", __func__);
 			break;
+		}
 
-		if(rq_data_dir(cur) != rq_data_dir(next))
+		if(rq_data_dir(cur) != rq_data_dir(next)){
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of read request\n", __func__);
 			break;
+		}
 
 		if(blk_rq_sectors(next) > SHRD_RW_THRESHOLD_IN_SECTOR){
 			sdev_printk(KERN_INFO, sdev, "%s: nopack because of large next\n", __func__);
@@ -2069,29 +2078,39 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		}
 
 		req_sectors += blk_rq_sectors(next);
-		if(req_sectors > SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR){
+		phys_segments += next->nr_phys_segments;
+		if(req_sectors > max_packed_rw){
 			req_sectors -= blk_rq_sectors(next);
+			phys_segments -= next->nr_phys_segments;
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
 			break;
 		}
 
 		//need to consider padding
 		if((log_addr & 0x1) != ((blk_rq_pos(next) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 			//not aligned, need to pad
-			if(req_sectors + 1 > max_packed_rw){
+			if(req_sectors + SHRD_SECTORS_PER_PAGE > max_packed_rw){
 				req_sectors -= blk_rq_sectors(next);
+				sdev_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
 				break;
 			}
 			else{
 				req_sectors += SHRD_SECTORS_PER_PAGE;
 				phys_segments++;
+				padding++;
+				log_addr++;
+				
 			}
 		}
-
+		log_addr += blk_rq_sectors(next) / SHRD_SECTORS_PER_PAGE;
 		list_add_tail(&next->queuelist, &twrite_entry->req_list);
 		cur = next;
 		reqs++;
 		
 	}while(1);
+
+	if(put_back)
+		blk_requeue_request(q, next);
 
 	if(reqs > 0){
 		list_add(&rq->queuelist, &twrite_entry->req_list);
@@ -2105,7 +2124,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	}
 
 	if(twrite_entry != NULL){
-		sdev_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d\n", __func__, twrite_entry->nr_requests);
+		sdev_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d, num blocks %d, num segments %d, num padding %d \n",
+			__func__, twrite_entry->nr_requests, twrite_entry->blocks, twrite_entry->phys_segments, padding);
 		return twrite_entry;
 	}
 
@@ -2307,6 +2327,8 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 	struct SHRD *shrd = sdev->shrd;
 	struct SHRD_TWRITE_HEADER *header = twrite_entry->twrite_hdr;
 	u32 idx = 0, sectors = twrite_entry->blocks, end;
+	u32 cnt = 0;
+
 	
 	memset(header, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
 
@@ -2316,20 +2338,30 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 	header->t_addr_start = shrd->rw_log_new_idx + SHRD_RW_LOG_START_IN_PAGE;
 	header->io_count = twrite_entry->blocks / SHRD_SECTORS_PER_PAGE;
 
-	sdev_printk(KERN_INFO, sdev, "%s: packing start, twrite, block: %d, reqs:%d, seg:%d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
-
 	idx = shrd->rw_log_new_idx;
 
 	end = shrd->rw_log_new_idx + (sectors >> 3);
 
+	sdev_printk(KERN_INFO, sdev, "%s: packing start, twrite, block: %d, reqs:%d, seg:%d, idx: %d, end: %d \n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
+
 	if(end >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		end -= SHRD_RW_LOG_SIZE_IN_PAGE;
+
+	//for debug,temp
+	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
+		cnt++;
+		sdev_printk(KERN_INFO, sdev, "%s: prq_addr: %u, prq_size: %u, cnt: %d\n", __func__, blk_rq_pos(prq), blk_rq_sectors(prq), cnt);
+		
+	}
+	sdev_printk(KERN_INFO, sdev, "%s: list count is %d\n", __func__, cnt);
 	
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
 
 		int i;
-		if(idx >= end)
+		if(idx > end){
 			sdev_printk(KERN_INFO, sdev, "%s: SHRD error on packing rw twrite, idx is larger than end, idx: %d, end: %d\n", __func__, idx, end);
+			BUG();
+		}
 		
 		if((idx & 0x1) != ((blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 			//need padding
@@ -2562,9 +2594,14 @@ static void scsi_request_fn(struct request_queue *q)
 		 * that the request is fully prepared even if we cannot
 		 * accept it.
 		 */
+		if (!scsi_dev_queue_ready(q, sdev))
+			break;
+		
 		req = blk_peek_request(q);
 		if (!req)
 			break;
+		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
+			blk_start_request(req);
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
@@ -2621,6 +2658,8 @@ static void scsi_request_fn(struct request_queue *q)
 			scsi_kill_request(req, q);
 			continue;
 		}
+		
+#if 0  //when we try to pack, we need to start request at the front.
 
 		if (!scsi_dev_queue_ready(q, sdev))
 			break;
@@ -2630,7 +2669,7 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
 			blk_start_request(req);
-
+		
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
 			if(req->shrd_flags == SHRD_REQ_TWRITE_DATA){
@@ -2646,6 +2685,8 @@ static void scsi_request_fn(struct request_queue *q)
 				}
 			}
 		}
+#endif
+
 #endif
 
 		spin_unlock_irq(q->queue_lock);
