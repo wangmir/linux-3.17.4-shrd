@@ -2175,7 +2175,10 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 	u32 idx = start_addr;
 	int ret;
 
+	spin_unlock_irq(q->queue_lock);
 	req = blk_get_request(q, WRITE, GFP_KERNEL);
+	spin_lock_irq(q->queue_lock);
+
 
 	if(!req){
 		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_get_request_failed\n", __func__);
@@ -2246,12 +2249,15 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 	struct request *req;
 	struct bio *bio;
 	int i, ret;
-
-	req = blk_get_request(q, WRITE, GFP_KERNEL);
+	
+	spin_unlock_irq(q->queue_lock);
+	req = blk_get_request(q, WRITE, GFP_NOIO);
+	spin_lock_irq(q->queue_lock);
 
 	if(!req){
 		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_get_request_failed\n", __func__);
 	}
+	sdev_printk(KERN_INFO, sdev, "%s: blk_get_request succeed\n", __func__);
 
 	blk_rq_set_block_pc(req);
 
@@ -2301,7 +2307,10 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 */
 static struct request *scsi_shrd_make_twrite_requests(struct request_queue *q, struct SHRD_TWRITE *twrite_entry){
 
+	struct scsi_device *sdev = q->queuedata;
 	struct request *header, *data;
+
+	sdev_printk(KERN_INFO, sdev, "%s start\n", __func__);
 
 	header = scsi_shrd_make_twrite_header_request(q, twrite_entry);
 	if(!header)
@@ -2346,14 +2355,6 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 
 	if(end >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		end -= SHRD_RW_LOG_SIZE_IN_PAGE;
-
-	//for debug,temp
-	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
-		cnt++;
-		sdev_printk(KERN_INFO, sdev, "%s: prq_addr: %u, prq_size: %u, cnt: %d\n", __func__, blk_rq_pos(prq), blk_rq_sectors(prq), cnt);
-		
-	}
-	sdev_printk(KERN_INFO, sdev, "%s: list count is %d\n", __func__, cnt);
 	
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
 
@@ -2401,7 +2402,9 @@ struct scsi_device *sdev = q->queuedata;
 	struct bio *bio;
 	int i, ret;
 
+	spin_unlock_irq(q->queue_lock);
 	req = blk_get_request(q, WRITE, GFP_KERNEL);
+	spin_lock_irq(q->queue_lock);
 
 	if(!req){
 		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_get_request_failed\n", __func__);
@@ -2594,17 +2597,23 @@ static void scsi_request_fn(struct request_queue *q)
 		 * that the request is fully prepared even if we cannot
 		 * accept it.
 		 */
-		if (!scsi_dev_queue_ready(q, sdev))
-			break;
+#ifdef CONFIG_SCSI_SHRD_TEST0
+		if(sdev->shrd_on){
+			if (!scsi_dev_queue_ready(q, sdev))
+				break;
+		}
+#endif
 		
 		req = blk_peek_request(q);
 		if (!req)
 			break;
-		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
-			blk_start_request(req);
-
+		
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
+			
+			if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
+				blk_start_request(req);
+			
 			BUG_ON(!sdev->shrd);
 			struct SHRD_TWRITE *twrite_entry = NULL;
 			struct SHRD_REMAP *remap_entry = NULL;
@@ -2658,9 +2667,19 @@ static void scsi_request_fn(struct request_queue *q)
 			scsi_kill_request(req, q);
 			continue;
 		}
-		
-#if 0  //when we try to pack, we need to start request at the front.
+#ifdef CONFIG_SCSI_SHRD_TEST0
+		if(!sdev->shrd_on){
+			if (!scsi_dev_queue_ready(q, sdev))
+				break;
 
+			/*
+			 * Remove the request from the request list.
+			 */
+			if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
+				blk_start_request(req);
+		}
+
+#else
 		if (!scsi_dev_queue_ready(q, sdev))
 			break;
 
@@ -2669,7 +2688,11 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
 			blk_start_request(req);
-		
+
+#endif
+
+#if 0 
+//when we try to pack, we need to start request at the front.
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
 			if(req->shrd_flags == SHRD_REQ_TWRITE_DATA){
