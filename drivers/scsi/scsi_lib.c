@@ -1796,6 +1796,8 @@ u32 scsi_shrd_init(struct request_queue *q){
 		printk("SHRD::kmalloc failed on sdev->shrd->shrd_rw_map\n");
 		goto fin;
 	}
+
+	memset(sdev->shrd->shrd_rw_map, 0x00, sizeof(struct SHRD_MAP) * SHRD_RW_LOG_SIZE_IN_PAGE);
 	
 	sdev->shrd->shrd_jn_map = (struct SHRD_MAP *)kmalloc(sizeof(struct SHRD_MAP) * SHRD_JN_LOG_SIZE_IN_PAGE, GFP_KERNEL);
 	if(sdev->shrd->shrd_jn_map == NULL){
@@ -1805,6 +1807,8 @@ u32 scsi_shrd_init(struct request_queue *q){
 		printk("SHRD::kmalloc failed on sdev->shrd->shrd_jn_map\n");
 		goto fin;
 	}
+
+	memset(sdev->shrd->shrd_jn_map, 0x00, sizeof(struct SHRD_MAP) * SHRD_JN_LOG_SIZE_IN_PAGE);
 
 	//WARNING::we need to change this. twrite_header should be allocated separatedly from twrite_cmd (as buddy, alloc_page)
 	sdev->shrd->twrite_cmd = (struct SHRD_TWRITE *)kmalloc(sizeof(struct SHRD_TWRITE) * SHRD_TWRITE_ENTRIES, GFP_KERNEL);
