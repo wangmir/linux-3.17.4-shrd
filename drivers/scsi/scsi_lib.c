@@ -2197,12 +2197,14 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 			if(len < PAGE_SIZE){
 				sdev_printk(KERN_INFO, sdev, "%s: bio_add_pc_page failed on dummy padding\n", __func__);
 			}
+			idx++;
 		}
 		pbio  = prq->bio;
 
 		for_each_bio(pbio){
 			bio_for_each_segment(bvec, pbio, iter){
 				len = bio_add_pc_page(q, bio, bvec.bv_page, bvec.bv_len, bvec.bv_offset);
+				idx++;
 				if(len < bvec.bv_len)
 					sdev_printk(KERN_INFO, sdev, "%s: bio_add_pc_page failed on request packing\n", __func__);
 			}
@@ -2221,7 +2223,8 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 	}
 
 	if(bio->bi_iter.bi_size != twrite_entry->blocks << 9){
-		sdev_printk(KERN_INFO, sdev, "%s: SHRD bio size is different from twrite_entry->block << 9\n", __func__);
+		sdev_printk(KERN_INFO, sdev, "%s: SHRD bio size is different from twrite_entry->block << 9, bio_size: %u, block size: %u\n", __func__, bio->bi_iter.bi_size, twrite_entry->blocks << 9);
+		BUG();
 		blk_put_request(req);
 		bio_put(bio);
 		return NULL;
@@ -2237,6 +2240,8 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 
 	req->shrd_flags = SHRD_REQ_TWRITE_DATA;
 	req->shrd_entry = (void *)twrite_entry;
+
+	return req;
 	
 }
 
@@ -2628,6 +2633,7 @@ static void scsi_request_fn(struct request_queue *q)
 				BUG_ON(!remap_entry);
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle try remap\n", __func__);
 				req = scsi_shrd_make_remap_request(q, remap_entry);
+				blk_start_request(req);
 				if(!req){
 					sdev_printk(KERN_INFO, sdev, "%s: SHRD error with make twrite request\n", __func__);
 				}
@@ -2639,6 +2645,7 @@ static void scsi_request_fn(struct request_queue *q)
 				//need twrite?
 				scsi_shrd_packing_rw_twrite(q, twrite_entry);
 				req = scsi_shrd_make_twrite_requests(q, twrite_entry);
+				blk_start_request(req);
 				if(!req){
 					sdev_printk(KERN_INFO, sdev, "%s: SHRD error with make twrite request\n", __func__);
 				}
