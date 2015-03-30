@@ -975,8 +975,10 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 	 * Kill remainder if no retrys.
 	 */
 	if (error && scsi_noretry_cmd(cmd)) {
-		if (scsi_end_request(req, error, blk_rq_bytes(req), 0))
+		if (scsi_end_request(req, error, blk_rq_bytes(req), 0)){
+			
 			BUG();
+		}
 		return;
 	}
 
