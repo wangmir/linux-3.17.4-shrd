@@ -1274,6 +1274,12 @@ static int scsi_setup_blk_pc_cmnd(struct scsi_device *sdev, struct request *req)
 
 	cmd->cmd_len = req->cmd_len;
 	cmd->transfersize = blk_rq_bytes(req);
+
+	if(req->shrd_flags){
+		cmd->transfersize = sdev->sector_size;
+		cmd->underflow = blk_rq_sectors(req) <<9;
+		cmd->sdb.length = blk_rq_bytes(req);
+	}
 	cmd->allowed = req->retries;
 	return BLKPREP_OK;
 }
@@ -1314,7 +1320,8 @@ static int scsi_setup_cmnd(struct scsi_device *sdev, struct request *req)
 	case REQ_TYPE_BLOCK_PC:
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
-		
+		if(req->shrd_flags > 0)
+			return scsi_setup_fs_cmnd(sdev, req);
 #endif
 		
 		return scsi_setup_blk_pc_cmnd(sdev, req);
@@ -2138,7 +2145,7 @@ no_pack:
 static void scsi_shrd_setup_cmd(struct request *req, sector_t block, sector_t this_count, u8 direction){
 
 	req->__sector = block;
-	req->__data_len = this_count;
+	req->__data_len = this_count << 9;
 	
 	if (direction == WRITE) {
 		req->cmd[0] = WRITE_6;
@@ -2176,7 +2183,7 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 	u32 start_addr = twrite_entry->twrite_hdr->t_addr_start;
 	u32 idx = start_addr;
 	int ret;
-
+/*
 	spin_unlock_irq(q->queue_lock);
 	req = blk_get_request(q, WRITE, GFP_KERNEL);
 	spin_lock_irq(q->queue_lock);
@@ -2187,7 +2194,7 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 	}
 
 	blk_rq_set_block_pc(req);
-
+*/
 	bio = bio_kmalloc(GFP_NOIO, SHRD_NUM_MAX_TWRITE_ENTRY);
 	if(!bio)
 		return NULL;
@@ -2215,7 +2222,7 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 
 	bio->bi_end_io = bio_map_kern_endio;
 	bio->bi_rw |= REQ_WRITE;
-
+/*
 	ret = blk_rq_append_bio(q, req, bio);
 	if(unlikely(ret)){
 		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_rq_append_bio failed\n", __func__);
@@ -2233,6 +2240,18 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 	}
 	
 	blk_queue_bounce(q, &req->bio);
+*/
+	spin_unlock_irq(q->queue_lock);
+	req = blk_make_request(q, bio, GFP_KERNEL);
+	spin_lock_irq(q->queue_lock);
+
+	if(req->__data_len){
+		sdev_printk(KERN_INFO, sdev, "%s: data_len is %d, twrite_entry->blocks is %d\n", __func__, req->__data_len, twrite_entry->blocks);
+	}
+
+	if(req->__sector){
+		sdev_printk(KERN_INFO, sdev, "%s: __sector is %d, t_addr_start << 3 is %d\n", __func__, req->__sector, twrite_entry->twrite_hdr->t_addr_start << 3);
+	}
 
 	scsi_shrd_setup_cmd(req, twrite_entry->twrite_hdr->t_addr_start << 3, twrite_entry->blocks, WRITE);
 
@@ -2256,7 +2275,8 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 	struct request *req;
 	struct bio *bio;
 	int i, ret;
-	
+
+	/*
 	spin_unlock_irq(q->queue_lock);
 	req = blk_get_request(q, WRITE, GFP_NOIO);
 	spin_lock_irq(q->queue_lock);
@@ -2267,7 +2287,7 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 	sdev_printk(KERN_INFO, sdev, "%s: blk_get_request succeed\n", __func__);
 
 	blk_rq_set_block_pc(req);
-
+*/
 	bio = bio_kmalloc(GFP_NOIO, SHRD_NUM_CORES);
 	if(!bio)
 		return NULL;
@@ -2282,7 +2302,7 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 
 	bio->bi_end_io = bio_map_kern_endio;
 	bio->bi_rw |= REQ_WRITE;
-
+/*
 	ret = blk_rq_append_bio(q, req, bio);
 	if(unlikely(ret)){
 		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_rq_append_bio failed\n", __func__);
@@ -2291,6 +2311,18 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 		return NULL;
 	}
 	blk_queue_bounce(q, &req->bio);
+*/
+	spin_unlock_irq(q->queue_lock);
+	req = blk_make_request(q, bio, GFP_KERNEL);
+	spin_lock_irq(q->queue_lock);
+
+	if(req->__data_len){
+		sdev_printk(KERN_INFO, sdev, "%s: data_len is %d, twrite_entry->blocks is %d\n", __func__, req->__data_len, twrite_entry->blocks);
+	}
+
+	if(req->__sector){
+		sdev_printk(KERN_INFO, sdev, "%s: __sector is %d, t_addr_start << 3 is %d\n", __func__, req->__sector,twrite_entry->entry_num * SHRD_NUM_CORES + SHRD_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE);
+	}
 
 	scsi_shrd_setup_cmd(req, twrite_entry->entry_num * SHRD_NUM_CORES + SHRD_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE, SHRD_SECTORS_PER_PAGE * SHRD_NUM_CORES, WRITE);
 
@@ -2358,7 +2390,7 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 
 	end = shrd->rw_log_new_idx + (sectors >> 3);
 
-	sdev_printk(KERN_INFO, sdev, "%s: packing start, twrite, block: %d, reqs:%d, seg:%d, idx: %d, end: %d \n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
+	sdev_printk(KERN_INFO, sdev, "%s: packing start, twrite, block: %d, reqs:%d, seg:%d, idx: %d, end: %d \n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments, idx, end);
 
 	if(end >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		end -= SHRD_RW_LOG_SIZE_IN_PAGE;
@@ -2767,6 +2799,11 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		cmd->scsi_done = scsi_done;
 		rtn = scsi_dispatch_cmd(cmd);
+
+		if(sdev->shrd_on){
+			if(rtn == 0)
+				sdev_printk(KERN_INFO, sdev, "%s: dispatch complete for req type: %d\n", __func__, req->shrd_flags);
+		}
 		
 		if (rtn) {
 			scsi_queue_insert(cmd, rtn);
