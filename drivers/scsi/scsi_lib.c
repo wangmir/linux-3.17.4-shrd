@@ -1318,12 +1318,6 @@ static int scsi_setup_cmnd(struct scsi_device *sdev, struct request *req)
 	case REQ_TYPE_FS:
 		return scsi_setup_fs_cmnd(sdev, req);
 	case REQ_TYPE_BLOCK_PC:
-
-#ifdef CONFIG_SCSI_SHRD_TEST0
-		if(req->shrd_flags > 0)
-			return scsi_setup_fs_cmnd(sdev, req);
-#endif
-		
 		return scsi_setup_blk_pc_cmnd(sdev, req);
 	default:
 		return BLKPREP_KILL;
@@ -2047,7 +2041,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	}
 	list_del(&twrite_entry->twrite_cmd_list);
 	shrd_clear_twrite_entry(twrite_entry);
-	
+
+	blk_start_request(rq);
 	
 	//write request fetch start
 	do{
@@ -2129,6 +2124,9 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	}
 	else{
 		sdev_printk(KERN_INFO, sdev, "%s: nopack because there are no requests to pack\n", __func__);
+		shrd_put_twrite_entry(sdev->shrd, twrite_entry);
+		blk_requeue_request(q, rq);
+		twrite_entry = NULL;
 		goto no_pack;
 	}
 
@@ -2195,7 +2193,7 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 
 	blk_rq_set_block_pc(req);
 */
-	bio = bio_kmalloc(GFP_NOIO, SHRD_NUM_MAX_TWRITE_ENTRY);
+	bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_MAX_TWRITE_ENTRY);
 	if(!bio)
 		return NULL;
 
@@ -2288,7 +2286,7 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 
 	blk_rq_set_block_pc(req);
 */
-	bio = bio_kmalloc(GFP_NOIO, SHRD_NUM_CORES);
+	bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_CORES);
 	if(!bio)
 		return NULL;
 
@@ -2636,13 +2634,6 @@ static void scsi_request_fn(struct request_queue *q)
 		 * that the request is fully prepared even if we cannot
 		 * accept it.
 		 */
-#ifdef CONFIG_SCSI_SHRD_TEST0
-		if(sdev->shrd_on){
-			if (!scsi_dev_queue_ready(q, sdev))
-				break;
-		}
-#endif
-		
 		req = blk_peek_request(q);
 		if (!req)
 			break;
@@ -2650,28 +2641,23 @@ static void scsi_request_fn(struct request_queue *q)
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
 			
-			if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
-				blk_start_request(req);
-			
 			BUG_ON(!sdev->shrd);
 			struct SHRD_TWRITE *twrite_entry = NULL;
 			struct SHRD_REMAP *remap_entry = NULL;
-			//spin_lock_irq(sdev->shrd->rw_log_lock);
 			
 			if(req->cmd_type == REQ_TYPE_BLOCK_PC){ //handle former speical function for SHRD
-				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle REQ_TYPE_BLOCK_PC request\n", __func__);
-				//spin_unlock_irq(sdev->shrd->rw_log_lock);
+				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle REQ_TYPE_BLOCK_PC request type %d\n", __func__, req->shrd_flags);
 			}
 			else if(remap_entry = scsi_shrd_prep_remap_if_need(q)){
 				//need remap?
 				BUG_ON(!remap_entry);
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle try remap\n", __func__);
 				req = scsi_shrd_make_remap_request(q, remap_entry);
-				blk_start_request(req);
+				
 				if(!req){
 					sdev_printk(KERN_INFO, sdev, "%s: SHRD error with make twrite request\n", __func__);
 				}
-				//spin_unlock_irq(sdev->shrd->rw_log_lock);
+				
 			}
 			else if(twrite_entry = scsi_shrd_prep_rw_twrite(q,req)){
 				BUG_ON(!twrite_entry);
@@ -2679,27 +2665,24 @@ static void scsi_request_fn(struct request_queue *q)
 				//need twrite?
 				scsi_shrd_packing_rw_twrite(q, twrite_entry);
 				req = scsi_shrd_make_twrite_requests(q, twrite_entry);
-				blk_start_request(req);
+				
 				if(!req){
 					sdev_printk(KERN_INFO, sdev, "%s: SHRD error with make twrite request\n", __func__);
 				}
-				//spin_unlock_irq(sdev->shrd->rw_log_lock);
+				
 			}
 			else if(!rq_data_dir(req)){
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle generic read function\n", __func__);
 				//read request, need to check whether need to change the address or not.
-				//spin_unlock_irq(sdev->shrd->rw_log_lock);
+				
 			}
 			else {	//generic prep procedure (for non_twrite request)
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle generic write function\n", __func__);
-				//spin_unlock_irq(sdev->shrd->rw_log_lock);
+				
 			}
-			
-			scsi_shrd_prep_req(q, req);
 		}
-		else{
-			scsi_shrd_prep_req(q, req);
-		}
+		
+		scsi_shrd_prep_req(q, req);
 		
 #endif
 		if (unlikely(!scsi_device_online(sdev))) {
@@ -2708,19 +2691,7 @@ static void scsi_request_fn(struct request_queue *q)
 			scsi_kill_request(req, q);
 			continue;
 		}
-#ifdef CONFIG_SCSI_SHRD_TEST0
-		if(!sdev->shrd_on){
-			if (!scsi_dev_queue_ready(q, sdev))
-				break;
 
-			/*
-			 * Remove the request from the request list.
-			 */
-			if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
-				blk_start_request(req);
-		}
-
-#else
 		if (!scsi_dev_queue_ready(q, sdev))
 			break;
 
@@ -2729,29 +2700,6 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
 			blk_start_request(req);
-
-#endif
-
-#if 0 
-//when we try to pack, we need to start request at the front.
-#ifdef CONFIG_SCSI_SHRD_TEST0
-		if(sdev->shrd_on){
-			if(req->shrd_flags == SHRD_REQ_TWRITE_DATA){
-				//we need to consider more about starting packed requests at 1) sending header or 2) sending data of twrite
-				struct SHRD_TWRITE *entry = (struct SHRD_TWRITE *)req->shrd_entry;
-				struct request *prq;
-
-				sdev_printk(KERN_INFO, sdev, "%s: start listed request", __func__);
-
-				list_for_each_entry(prq, &entry->req_list, queuelist){
-					if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, prq)))
-						blk_start_request(prq);
-				}
-			}
-		}
-#endif
-
-#endif
 
 		spin_unlock_irq(q->queue_lock);
 		cmd = req->special;
