@@ -35,6 +35,7 @@
 #include <linux/rbtree.h>
 #include <scsi/scsi_shrd.h>
 #include "../../block/blk.h"
+#include "sd.h"
 
 #endif
 
@@ -2163,7 +2164,7 @@ static void scsi_shrd_setup_cmd(struct request *req, sector_t block, sector_t th
 	
 }
 
-static void bio_map_kern_endio(struct bio* bio, int err){
+static void scsi_shrd_bio_endio(struct bio* bio, int err){
 	bio_put(bio);
 }
 
@@ -2218,7 +2219,7 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 		}
 	}
 
-	bio->bi_end_io = bio_map_kern_endio;
+	bio->bi_end_io = scsi_shrd_bio_endio;
 	bio->bi_rw |= REQ_WRITE;
 /*
 	ret = blk_rq_append_bio(q, req, bio);
@@ -2274,18 +2275,6 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 	struct bio *bio;
 	int i, ret;
 
-	/*
-	spin_unlock_irq(q->queue_lock);
-	req = blk_get_request(q, WRITE, GFP_NOIO);
-	spin_lock_irq(q->queue_lock);
-
-	if(!req){
-		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_get_request_failed\n", __func__);
-	}
-	sdev_printk(KERN_INFO, sdev, "%s: blk_get_request succeed\n", __func__);
-
-	blk_rq_set_block_pc(req);
-*/
 	bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_CORES);
 	if(!bio)
 		return NULL;
@@ -2293,23 +2282,14 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 	for(i=0; i < SHRD_NUM_CORES; i++){
 		if(bio_add_pc_page(q, bio, virt_to_page((void *)twrite_entry->twrite_hdr), PAGE_SIZE, 0) < PAGE_SIZE){
 			sdev_printk(KERN_INFO, sdev, "%s: SHRD bio_add_pc_page failed on CORE %d\n", __func__, i);
-			blk_put_request(req);
+			//blk_put_request(req);
 			return NULL;
 		}
 	}
 
-	bio->bi_end_io = bio_map_kern_endio;
+	bio->bi_end_io = scsi_shrd_bio_endio;
 	bio->bi_rw |= REQ_WRITE;
-/*
-	ret = blk_rq_append_bio(q, req, bio);
-	if(unlikely(ret)){
-		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_rq_append_bio failed\n", __func__);
-		blk_put_request(req);
-		bio_put(bio);
-		return NULL;
-	}
-	blk_queue_bounce(q, &req->bio);
-*/
+
 	spin_unlock_irq(q->queue_lock);
 	req = blk_make_request(q, bio, GFP_KERNEL);
 	spin_lock_irq(q->queue_lock);
@@ -2434,7 +2414,7 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 
 static struct request * scsi_shrd_make_remap_request(struct request_queue *q, struct SHRD_REMAP *remap_entry){
 
-struct scsi_device *sdev = q->queuedata;
+	struct scsi_device *sdev = q->queuedata;
 	struct request *req;
 	struct bio *bio;
 	int i, ret;
@@ -2461,7 +2441,7 @@ struct scsi_device *sdev = q->queuedata;
 		}
 	}
 
-	bio->bi_end_io = bio_map_kern_endio;
+	bio->bi_end_io = scsi_shrd_bio_endio;
 	bio->bi_rw |= REQ_WRITE;
 
 	ret = blk_rq_append_bio(q, req, bio);
@@ -2621,6 +2601,14 @@ static void scsi_request_fn(struct request_queue *q)
 	struct scsi_cmnd *cmd;
 	struct request *req;
 
+	//for test
+	struct scsi_disk *sdkp = container_of(sdev, struct scsi_disk, device);
+	struct gendisk *from_sdev, *from_req;
+
+	
+		//
+
+
 	/*
 	 * To start with, we keep looping until the queue is empty, or until
 	 * the host is no longer able to accept any more requests.
@@ -2637,6 +2625,18 @@ static void scsi_request_fn(struct request_queue *q)
 		req = blk_peek_request(q);
 		if (!req)
 			break;
+//for test
+		if(!sdkp)
+			sdev_printk(KERN_INFO, sdev, "%s: sdkp is NULL, req_type is %d\n", __func__, req->cmd_type);
+
+		else{
+			from_sdev = sdkp->disk;
+			from_req = req->rq_disk;
+
+			sdev_printk(KERN_INFO, sdev, "%s: compare gendisk, from_sdev: 0x%X, from_req: 0x%X\n", __func__, from_sdev, from_req);
+		}
+
+		//
 		
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
