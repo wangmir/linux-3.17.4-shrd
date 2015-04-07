@@ -896,16 +896,6 @@ static int sd_setup_read_write_cmnd(struct scsi_cmnd *SCpnt)
 	int ret, host_dif;
 	unsigned char protect;
 
-#if 0
-//#ifdef CONFIG_SCSI_SHRD_TEST0
-//test for shrd
-	if(SCpnt->device->shrd_on == 1){
-		block = 209715200 + (block & 0xffff );
-		printk("block address is switched into %llu\n", block);
-	}
-#endif
-
-
 	ret = scsi_init_io(SCpnt, GFP_ATOMIC);
 	if (ret != BLKPREP_OK)
 		goto out;
