@@ -1142,6 +1142,12 @@ static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb,
 	BUG_ON(count > sdb->table.nents);
 	sdb->table.nents = count;
 	sdb->length = blk_rq_bytes(req);
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
+	if(((struct scsi_device *)req->q->queuedata)->shrd_on)
+		sdev_printk(KERN_INFO, (struct scsi_device *)req->q->queuedata, "%s: nents %d, sectors %d\n", __func__, count, blk_rq_sectors(req));
+#endif
+
 	return BLKPREP_OK;
 }
 
@@ -2161,6 +2167,8 @@ static void scsi_shrd_setup_cmd(struct request *req, sector_t block, sector_t th
 	req->cmd[6] = req->cmd[9] = 0;
 	req->cmd[7] = (unsigned char) (this_count >> 8) & 0xff;
 	req->cmd[8] = (unsigned char) this_count & 0xff;
+
+	req->cmd_len = 10;
 	
 }
 
@@ -2256,7 +2264,7 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 
 	req->cmd_flags |= REQ_WRITE;
 	req->retries = 5;
-	req->timeout = 60; //is it correct?
+	req->timeout = 200 * HZ; //is it correct?
 
 	req->shrd_flags = SHRD_REQ_TWRITE_DATA;
 	req->shrd_entry = (void *)twrite_entry;
@@ -2306,7 +2314,7 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 
 	req->cmd_flags |= REQ_WRITE;
 	req->retries = 5;
-	req->timeout = 60; //is it correct?
+	req->timeout = 200 * HZ; //is it correct?
 
 	req->shrd_flags = SHRD_REQ_TWRITE_HEADER;
 	req->shrd_entry = (void *)twrite_entry;
@@ -2457,7 +2465,7 @@ static struct request * scsi_shrd_make_remap_request(struct request_queue *q, st
 
 	req->cmd_flags |= REQ_WRITE;
 	req->retries = 5;
-	req->timeout = 60; //is it correct?
+	req->timeout = 200 * HZ; //is it correct?
 
 	req->shrd_flags = SHRD_REQ_REMAP;
 	req->shrd_entry = (void *)remap_entry;
@@ -2579,6 +2587,8 @@ static int scsi_shrd_check_read_requests(struct request_queue *q, struct request
 	
 }
 
+
+
 #endif
 
 /*
@@ -2600,15 +2610,7 @@ static void scsi_request_fn(struct request_queue *q)
 	struct Scsi_Host *shost;
 	struct scsi_cmnd *cmd;
 	struct request *req;
-
-	//for test
-	struct scsi_disk *sdkp = container_of(sdev, struct scsi_disk, device);
-	struct gendisk *from_sdev, *from_req;
-
 	
-		//
-
-
 	/*
 	 * To start with, we keep looping until the queue is empty, or until
 	 * the host is no longer able to accept any more requests.
@@ -2625,18 +2627,6 @@ static void scsi_request_fn(struct request_queue *q)
 		req = blk_peek_request(q);
 		if (!req)
 			break;
-//for test
-		if(!sdkp)
-			sdev_printk(KERN_INFO, sdev, "%s: sdkp is NULL, req_type is %d\n", __func__, req->cmd_type);
-
-		else{
-			from_sdev = sdkp->disk;
-			from_req = req->rq_disk;
-
-			sdev_printk(KERN_INFO, sdev, "%s: compare gendisk, from_sdev: 0x%X, from_req: 0x%X\n", __func__, from_sdev, from_req);
-		}
-
-		//
 		
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
