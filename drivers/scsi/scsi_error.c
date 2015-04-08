@@ -273,10 +273,18 @@ int scsi_eh_scmd_add(struct scsi_cmnd *scmd, int eh_flag)
 enum blk_eh_timer_return scsi_times_out(struct request *req)
 {
 	struct scsi_cmnd *scmd = req->special;
+	struct scsi_device *sdev = scmd->device;
 	enum blk_eh_timer_return rtn = BLK_EH_NOT_HANDLED;
 	struct Scsi_Host *host = scmd->device->host;
 
 	trace_scsi_dispatch_cmd_timeout(scmd);
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
+	if(sdev->shrd_on){
+		sdev_printk(KERN_ERR, sdev, "%s: SHRD  request time out debugging, req->shrd_flags: %d, req pos: %d, req cnt: %d\n", __func__, req->shrd_flags, blk_rq_pos(req), blk_rq_sectors(req));
+	}
+#endif
+	
 	scsi_log_completion(scmd, TIMEOUT_ERROR);
 
 	if (host->eh_deadline != -1 && !host->last_reset)
