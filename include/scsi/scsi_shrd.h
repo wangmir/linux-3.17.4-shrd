@@ -160,6 +160,11 @@ struct SHRD{
 	struct scsi_cmnd *remained_twrite_data_cmd;
 	struct scsi_cmnd *remained_remap_cmd;
 	struct scsi_cmnd *remained_spread_cmd;
+
+	//for REQ_TYPE_FS request handling,
+	//we need to reserve rq_disk first, and then use at making twrite request
+	struct block_device *bdev;
+	struct gendisk *rq_disk;
 	
 };
 

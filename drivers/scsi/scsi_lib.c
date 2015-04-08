@@ -1900,7 +1900,6 @@ fin:
 */
 static void scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 
-	struct scsi_device *sdev = q->queuedata;
 	int ret;
 	
 	ret = scsi_prep_fn(q, rq);
@@ -1981,6 +1980,13 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		sdev_printk(KERN_INFO, sdev, "%s: nopack because of tiny requests\n", __func__);
 		goto no_pack;
 	}
+
+	if(rq->rq_disk){
+		shrd->rq_disk = rq->rq_disk;
+	}
+	if(rq->bio->bi_bdev){
+		shrd->bdev = rq->bio->bi_bdev;
+	}
 	
 	max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
 	req_sectors += blk_rq_sectors(cur);
@@ -2058,9 +2064,19 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 
+		BUG_ON(!shrd->rq_disk);
+
 		next = blk_fetch_request(q); //we need to start the request in order to get next request
 
-		//sdev_printk(KERN_INFO, sdev, "%s: blk_peek_request succeed\n", __func__);
+		//test for rq_disk
+
+		if(next->rq_disk != shrd->rq_disk){
+			sdev_printk(KERN_ERR, sdev, "%s: next->rq_disk is not same as shrd->rq_disk\n", __func__); 
+		}
+		if(next->bio->bi_bdev != shrd->bdev){
+			sdev_printk(KERN_ERR, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
+		}
+		
 
 		if(!next){
 			sdev_printk(KERN_INFO, sdev, "%s: nopack because of noreq\n", __func__);
@@ -2182,6 +2198,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *q, struct SHRD_TWRITE *twrite_entry){
 
 	struct scsi_device *sdev = q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
 	struct request *req, *prq;
 	struct bio *bio, *pbio;
 	struct bio_vec bvec;
@@ -2189,27 +2206,20 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 	u32 len = 0;
 	u32 start_addr = twrite_entry->twrite_hdr->t_addr_start;
 	u32 idx = start_addr;
-	int ret;
-/*
-	spin_unlock_irq(q->queue_lock);
-	req = blk_get_request(q, WRITE, GFP_KERNEL);
-	spin_lock_irq(q->queue_lock);
 
-
-	if(!req){
-		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_get_request_failed\n", __func__);
-	}
-
-	blk_rq_set_block_pc(req);
-*/
 	bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_MAX_TWRITE_ENTRY);
 	if(!bio)
 		return NULL;
 
+	bio->bi_end_io = scsi_shrd_bio_endio;
+	bio->bi_rw |= REQ_WRITE;
+	bio->bi_iter.bi_sector = twrite_entry->twrite_hdr->t_addr_start << 3;
+	bio->bi_bdev = shrd->bdev;
+
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
 		if((idx & 0x1) != ((blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 			//padding
-			len = bio_add_pc_page(q, bio, virt_to_page((void *)twrite_entry->twrite_hdr), PAGE_SIZE, 0);
+			len = bio_add_page(bio, virt_to_page((void *)twrite_entry->twrite_hdr), PAGE_SIZE, 0);
 			if(len < PAGE_SIZE){
 				sdev_printk(KERN_INFO, sdev, "%s: bio_add_pc_page failed on dummy padding\n", __func__);
 			}
@@ -2219,7 +2229,7 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 
 		for_each_bio(pbio){
 			bio_for_each_segment(bvec, pbio, iter){
-				len = bio_add_pc_page(q, bio, bvec.bv_page, bvec.bv_len, bvec.bv_offset);
+				len = bio_add_page(bio, bvec.bv_page, bvec.bv_len, bvec.bv_offset);
 				idx++;
 				if(len < bvec.bv_len)
 					sdev_printk(KERN_INFO, sdev, "%s: bio_add_pc_page failed on request packing\n", __func__);
@@ -2227,29 +2237,9 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 		}
 	}
 
-	bio->bi_end_io = scsi_shrd_bio_endio;
-	bio->bi_rw |= REQ_WRITE;
-/*
-	ret = blk_rq_append_bio(q, req, bio);
-	if(unlikely(ret)){
-		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_rq_append_bio failed\n", __func__);
-		blk_put_request(req);
-		bio_put(bio);
-		return NULL;
-	}
-
-	if(bio->bi_iter.bi_size != twrite_entry->blocks << 9){
-		sdev_printk(KERN_INFO, sdev, "%s: SHRD bio size is different from twrite_entry->block << 9, bio_size: %u, block size: %u\n", __func__, bio->bi_iter.bi_size, twrite_entry->blocks << 9);
-		BUG();
-		blk_put_request(req);
-		bio_put(bio);
-		return NULL;
-	}
-	
-	blk_queue_bounce(q, &req->bio);
-*/
 	spin_unlock_irq(q->queue_lock);
 	req = blk_make_request(q, bio, GFP_KERNEL);
+	req->cmd_type = REQ_TYPE_FS;
 	spin_lock_irq(q->queue_lock);
 
 	if(req->__data_len){
@@ -2279,6 +2269,7 @@ static struct request* scsi_shrd_make_twrite_data_request(struct request_queue *
 static struct request *scsi_shrd_make_twrite_header_request(struct request_queue *q, struct SHRD_TWRITE *twrite_entry){
 
 	struct scsi_device *sdev = q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
 	struct request *req;
 	struct bio *bio;
 	int i, ret;
@@ -2287,19 +2278,21 @@ static struct request *scsi_shrd_make_twrite_header_request(struct request_queue
 	if(!bio)
 		return NULL;
 
+	bio->bi_iter.bi_sector = twrite_entry->entry_num * SHRD_NUM_CORES + SHRD_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE;
+	bio->bi_end_io = scsi_shrd_bio_endio;
+	bio->bi_rw |= REQ_WRITE;
+	bio->bi_bdev = shrd->bdev;
+
 	for(i=0; i < SHRD_NUM_CORES; i++){
-		if(bio_add_pc_page(q, bio, virt_to_page((void *)twrite_entry->twrite_hdr), PAGE_SIZE, 0) < PAGE_SIZE){
+		if(bio_add_page(bio, virt_to_page((void *)twrite_entry->twrite_hdr), PAGE_SIZE, 0) < PAGE_SIZE){
 			sdev_printk(KERN_INFO, sdev, "%s: SHRD bio_add_pc_page failed on CORE %d\n", __func__, i);
-			//blk_put_request(req);
 			return NULL;
 		}
 	}
 
-	bio->bi_end_io = scsi_shrd_bio_endio;
-	bio->bi_rw |= REQ_WRITE;
-
 	spin_unlock_irq(q->queue_lock);
 	req = blk_make_request(q, bio, GFP_KERNEL);
+	req->cmd_type = REQ_TYPE_FS; //because blk_make_request makes a request as REQ_TYPE_BLOCK_PC
 	spin_lock_irq(q->queue_lock);
 
 	if(req->__data_len){
@@ -2423,43 +2416,36 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 static struct request * scsi_shrd_make_remap_request(struct request_queue *q, struct SHRD_REMAP *remap_entry){
 
 	struct scsi_device *sdev = q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
 	struct request *req;
 	struct bio *bio;
 	int i, ret;
-
-	spin_unlock_irq(q->queue_lock);
-	req = blk_get_request(q, WRITE, GFP_KERNEL);
-	spin_lock_irq(q->queue_lock);
-
-	if(!req){
-		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_get_request_failed\n", __func__);
-	}
-
-	blk_rq_set_block_pc(req);
 
 	bio = bio_kmalloc(GFP_NOIO, SHRD_NUM_CORES);
 	if(!bio)
 		return NULL;
 
+	bio->bi_end_io = scsi_shrd_bio_endio;
+	bio->bi_rw |= REQ_WRITE;
+	bio->bi_iter.bi_sector = remap_entry->entry_num * SHRD_NUM_CORES + SHRD_REMAP_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE;
+	bio->bi_bdev = shrd->bdev;
+
 	for(i=0; i < SHRD_NUM_CORES; i++){
-		if(bio_add_pc_page(q, bio, virt_to_page((void *)remap_entry->remap_data), PAGE_SIZE, 0) < PAGE_SIZE){
+		if(bio_add_page(bio, virt_to_page((void *)remap_entry->remap_data), PAGE_SIZE, 0) < PAGE_SIZE){
 			sdev_printk(KERN_INFO, sdev, "%s: SHRD bio_add_pc_page failed on CORE %d\n", __func__, i);
 			blk_put_request(req);
 			return NULL;
 		}
 	}
+	
+	spin_unlock_irq(q->queue_lock);
+	req = blk_make_request(q, bio, GFP_KERNEL);
+	req->cmd_type = REQ_TYPE_FS; //because blk_make_request makes a request as REQ_TYPE_BLOCK_PC
+	spin_lock_irq(q->queue_lock);
 
-	bio->bi_end_io = scsi_shrd_bio_endio;
-	bio->bi_rw |= REQ_WRITE;
-
-	ret = blk_rq_append_bio(q, req, bio);
-	if(unlikely(ret)){
-		sdev_printk(KERN_INFO, sdev, "%s: SHRD blk_rq_append_bio failed\n", __func__);
-		blk_put_request(req);
-		bio_put(bio);
-		return NULL;
+	if(req->__data_len){
+		sdev_printk(KERN_INFO, sdev, "%s: data_len is %d\n", __func__, req->__data_len);
 	}
-	blk_queue_bounce(q, &req->bio);
 
 	scsi_shrd_setup_cmd(req, remap_entry->entry_num * SHRD_NUM_CORES + SHRD_REMAP_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE, SHRD_SECTORS_PER_PAGE * SHRD_NUM_CORES, WRITE);
 
@@ -2635,8 +2621,8 @@ static void scsi_request_fn(struct request_queue *q)
 			struct SHRD_TWRITE *twrite_entry = NULL;
 			struct SHRD_REMAP *remap_entry = NULL;
 			
-			if(req->cmd_type == REQ_TYPE_BLOCK_PC){ //handle former speical function for SHRD
-				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle REQ_TYPE_BLOCK_PC request type %d\n", __func__, req->shrd_flags);
+			if(req->shrd_flags > SHRD_REQ_NON){ //handle former speical function for SHRD
+				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle request shrd type %d\n", __func__, req->shrd_flags);
 			}
 			else if(remap_entry = scsi_shrd_prep_remap_if_need(q)){
 				//need remap?
