@@ -11,7 +11,8 @@
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
-#define SHRD_NUM_CORES 2 //Samsung RSP SSD specific design, 
+//#define SHRD_NUM_CORES 2 //Samsung RSP SSD specific design, 
+#define SHRD_NUM_CORES 1
 
 #define SHRD_SECTORS_PER_PAGE 8
 
@@ -28,7 +29,6 @@
 
 //110 * 1024 * 256 - SHRD_JN_LOG_SIZE_IN_PAGE - SHRD_RW_LOG_SIZE_IN_PAGE
 //#define SHRD_TOTAL_LPN (110 * 1024 * 256) //110GB
-
 #define SHRD_TOTAL_LPN (50 * 1024 * 256) 
 
 #define SHRD_LOG_START_IN_PAGE (SHRD_TOTAL_LPN - SHRD_RW_LOG_SIZE_IN_PAGE - SHRD_JN_LOG_SIZE_IN_PAGE)

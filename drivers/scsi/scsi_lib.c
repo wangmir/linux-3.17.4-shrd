@@ -1787,6 +1787,15 @@ void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree){
 	}
 }
 
+static scsi_shrd_bd_init(struct request_queue *q){
+
+	struct scsi_device *sdev = q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
+
+	
+	
+}
+
 u32 scsi_shrd_init(struct request_queue *q){
 
 	struct scsi_device *sdev = q->queuedata;
