@@ -12,7 +12,10 @@
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
 //#define SHRD_NUM_CORES 2 //Samsung RSP SSD specific design, 
-#define SHRD_NUM_CORES 1
+
+#define DEV_PATH "/dev/sde" //should be modified to dynamic changing.
+
+#define SHRD_NUM_CORES 2
 
 #define SHRD_SECTORS_PER_PAGE 8
 
@@ -54,6 +57,10 @@
 #define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 2)
 
 #define SHRD_INVALID_LPN 0x7fffffff
+
+#define REQ_SHRD_TWRITE_HDR REQ_WRITE |REQ_SYNC |REQ_SOFTBARRIER //softbarrier is not used for the bio, so borrow it
+#define REQ_SHRD_TWRITE_DAT REQ_WRITE | REQ_SYNC | REQ_NOMERGE
+#define REQ_SHRD_REMAP REQ_WRITE | REQ_SYNC | REQ_STARTED
 
 enum SHRD_MAP_FLAG {
 	SHRD_INVALID_MAP = 0,

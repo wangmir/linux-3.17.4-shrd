@@ -207,11 +207,6 @@ struct request {
 	rq_end_io_fn *end_io;
 	void *end_io_data;
 
-#ifdef CONFIG_SCSI_SHRD_TEST0
-	u8 shrd_flags; //denotes this cmnd is twrite header, data, remap or special read cmnd.
-	void *shrd_entry; //according to the shrd_flags, this entry can be SHRD_TWRITE or SHRD_REMAP
-#endif
-
 	/* for bidi */
 	struct request *next_rq;
 };
