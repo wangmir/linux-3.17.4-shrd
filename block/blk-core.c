@@ -1660,7 +1660,14 @@ get_rq:
 	} else {
 		spin_lock_irq(q->queue_lock);
 		add_acct_request(q, req, where);
+		
+#ifdef CONFIG_SCSI_SHRD_TEST0
+		//we need to prevent starting another queue when the bio is SHRD request.
+		if(!(bio->bi_rw & REQ_SOFTBARRIER || bio->bi_rw & REQ_NOMERGE || bio->bi_rw & REQ_STARTED))
+			__blk_run_queue(q);
+#else
 		__blk_run_queue(q);
+#endif
 out_unlock:
 		spin_unlock_irq(q->queue_lock);
 	}

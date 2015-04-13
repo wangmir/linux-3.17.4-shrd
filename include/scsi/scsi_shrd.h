@@ -58,9 +58,9 @@
 
 #define SHRD_INVALID_LPN 0x7fffffff
 
-#define REQ_SHRD_TWRITE_HDR REQ_WRITE |REQ_SYNC |REQ_SOFTBARRIER //softbarrier is not used for the bio, so borrow it
-#define REQ_SHRD_TWRITE_DAT REQ_WRITE | REQ_SYNC | REQ_NOMERGE
-#define REQ_SHRD_REMAP REQ_WRITE | REQ_SYNC | REQ_STARTED
+#define REQ_SHRD_TWRITE_HDR REQ_SOFTBARRIER //softbarrier is not used for the bio, so borrow it
+#define REQ_SHRD_TWRITE_DAT REQ_NOMERGE
+#define REQ_SHRD_REMAP REQ_STARTED
 
 enum SHRD_MAP_FLAG {
 	SHRD_INVALID_MAP = 0,
