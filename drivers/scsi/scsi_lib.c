@@ -2260,6 +2260,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 	else if(bio->bi_rw | REQ_SHRD_TWRITE_DAT){
 		struct SHRD_TWRITE *twrite_entry;
 		struct request *prq;
+		unsigned long flags;
 
 		twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		BUG_ON(!twrite_entry);
@@ -2267,7 +2268,9 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
 			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
 			BUG_ON(ret);
+			spin_lock_irqsave(prq->q->queue_lock, flags);
 			blk_finish_request(prq, 0);
+			spin_unlock_irqrestore(prq->q->queue_lock, flags);
 		}
 
 		shrd_put_twrite_entry(shrd, twrite_entry);
