@@ -33,6 +33,7 @@
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 #include <linux/rbtree.h>
+#include <linux/task_io_accounting_ops.h>
 #include <scsi/scsi_shrd.h>
 #include "../../block/blk.h"
 #include "sd.h"
@@ -1891,7 +1892,7 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 	req = get_request(q, rw_flags, bio, GFP_NOIO);
 	if (unlikely(!req)) {
 		bio_endio(bio, -ENODEV);	/* @q is dead */
-		goto out_unlock;
+		return;
 	}
 
 	/*
@@ -1905,8 +1906,8 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 	if (test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags))
 		req->cpu = raw_smp_processor_id();
 
-	blk_account_io_start(rq, true);
-	__elv_add_request(q, rq, where);
+	blk_account_io_start(req, true);
+	__elv_add_request(q, req, where);
 
 }
 

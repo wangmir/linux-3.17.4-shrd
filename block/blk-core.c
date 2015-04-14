@@ -1114,9 +1114,15 @@ rq_starved:
  * Returns %NULL on failure, with @q->queue_lock held.
  * Returns !%NULL on success, with @q->queue_lock *not held*.
  */
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
+struct request *get_request(struct request_queue *q, int rw_flags,
+				   struct bio *bio, gfp_t gfp_mask){
+#else
 static struct request *get_request(struct request_queue *q, int rw_flags,
-				   struct bio *bio, gfp_t gfp_mask)
-{
+				   struct bio *bio, gfp_t gfp_mask){
+#endif
+
 	const bool is_sync = rw_is_sync(rw_flags) != 0;
 	DEFINE_WAIT(wait);
 	struct request_list *rl;
@@ -1154,6 +1160,9 @@ retry:
 
 	goto retry;
 }
+#ifdef CONFIG_SCSI_SHRD_TEST0
+EXPORT_SYMBOL(get_request);
+#endif
 
 static struct request *blk_old_get_request(struct request_queue *q, int rw,
 		gfp_t gfp_mask)
