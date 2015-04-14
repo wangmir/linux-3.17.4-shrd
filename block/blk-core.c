@@ -1572,17 +1572,6 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		goto get_rq;
 	}
 
-#ifdef CONFIG_SCSI_SHRD_TEST0
-	//insert twrite, remap command into front with nomerge
-	if(bio->bi_rw & REQ_SOFTBARRIER || bio->bi_rw & REQ_NOMERGE || bio->bi_rw & REQ_STARTED){ 
-		//REQ_SOFTBARRIER is only used for request structure in general.
-		//We borrow this flag, and then use this flag as twrite indicator. (so put this bio request at the top of request_queue)
-		spin_lock_irq(q->queue_lock);
-		where = ELEVATOR_INSERT_FRONT;
-		goto get_rq;
-	}
-#endif
-
 	/*
 	 * Check if we can merge with the plugged list before grabbing
 	 * any locks.
@@ -1660,14 +1649,8 @@ get_rq:
 	} else {
 		spin_lock_irq(q->queue_lock);
 		add_acct_request(q, req, where);
-		
-#ifdef CONFIG_SCSI_SHRD_TEST0
-		//we need to prevent starting another queue when the bio is SHRD request.
-		if(!(bio->bi_rw & REQ_SOFTBARRIER || bio->bi_rw & REQ_NOMERGE || bio->bi_rw & REQ_STARTED))
-			__blk_run_queue(q);
-#else
+
 		__blk_run_queue(q);
-#endif
 out_unlock:
 		spin_unlock_irq(q->queue_lock);
 	}

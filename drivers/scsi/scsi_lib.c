@@ -1872,6 +1872,78 @@ fin:
 	return rtn;
 }
 
+static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
+	
+	const bool sync = !!(bio->bi_rw & REQ_SYNC);
+	int el_ret, rw_flags, where = ELEVATOR_INSERT_FRONT;
+	struct request *req;
+
+	blk_queue_bounce(q, &bio);
+
+	rw_flags = bio_data_dir(bio);
+	if (sync)
+		rw_flags |= REQ_SYNC;
+
+	/*
+	 * Grab a free request. This is might sleep but can not fail.
+	 * Returns with the queue unlocked.
+	 */
+	req = get_request(q, rw_flags, bio, GFP_NOIO);
+	if (unlikely(!req)) {
+		bio_endio(bio, -ENODEV);	/* @q is dead */
+		goto out_unlock;
+	}
+
+	/*
+	 * After dropping the lock and possibly sleeping here, our request
+	 * may now be mergeable after it had proven unmergeable (above).
+	 * We don't worry about that case for efficiency. It won't happen
+	 * often, and the elevators are able to handle it.
+	 */
+	init_request_from_bio(req, bio);
+
+	if (test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags))
+		req->cpu = raw_smp_processor_id();
+
+	blk_account_io_start(rq, true);
+	__elv_add_request(q, rq, where);
+
+}
+
+
+/*
+	Modified submit_bio() function (include generic_make_request, and blk_queue_bio.
+	because shrd need to hold queue_lock and no need to make a new io_context and new run_queue
+*/
+static void scsi_shrd_submit_bio(int rw, struct bio *bio){
+
+	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+
+	bio->bi_rw |= rw;
+
+	/*
+	 * If it's a regular read/write or a barrier with data attached,
+	 * go through the normal accounting stuff before submission.
+	 */
+	if (bio_has_data(bio)) {
+		unsigned int count;
+
+		if (unlikely(rw & REQ_WRITE_SAME))
+			count = bdev_logical_block_size(bio->bi_bdev) >> 9;
+		else
+			count = bio_sectors(bio);
+
+		if (rw & WRITE) {
+			count_vm_events(PGPGOUT, count);
+		} else {
+			task_io_account_read(bio->bi_iter.bi_size);
+			count_vm_events(PGPGIN, count);
+		}
+	}
+
+	scsi_shrd_blk_queue_bio(q, bio);
+}
+
 /*
 	prep function for non_twrite request.
 
@@ -2179,8 +2251,12 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 	sdev_printk(KERN_INFO, sdev, "%s: bio request is %s, bi_sector %d, bi_size %d", __func__, 
 		(bio->bi_rw & REQ_SHRD_TWRITE_HDR) ? "twrite hdr": (bio->bi_rw & REQ_SHRD_TWRITE_DAT) ? "twrite data" : (bio->bi_rw & REQ_SHRD_REMAP) ? "remap" : "err",
 		bio->bi_iter.bi_sector, bio->bi_iter.bi_size);
-
-	if(bio->bi_rw | REQ_SHRD_TWRITE_DAT){
+	
+	if(bio->bi_rw | REQ_SHRD_TWRITE_HDR){
+		struct SHRD_TWRITE *twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
+		sdev_printk(KERN_INFO, sdev, "%s: twrite block: %d, nr_request: %d, phys_segment: %d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
+	}
+	else if(bio->bi_rw | REQ_SHRD_TWRITE_DAT){
 		struct SHRD_TWRITE *twrite_entry;
 		struct request *prq;
 
@@ -2213,7 +2289,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 
 		shrd_put_remap_entry(shrd, remap_entry);
 	}
-	
+
 	bio_put(bio);
 }
 
@@ -2320,11 +2396,20 @@ static void scsi_shrd_make_twrite_bios(struct request_queue *q, struct SHRD_TWRI
 	if(!data){
 		sdev_printk(KERN_ERR, sdev, "%s: data is NULL\n", __func__);
 	}
+
+	sdev_printk(KERN_INFO, sdev, "%s: bio make complete, header bi_sector %d, bi_size %d, data bi_sector %d, bi_size %d\n", __func__
+		, header->bi_iter.bi_sector, header->bi_iter.bi_size, data->bi_iter.bi_sector, data->bi_iter.bi_size);
+
+	scsi_shrd_submit_bio(REQ_SYNC, data);
+	scsi_shrd_submit_bio(REQ_SYNC, header);
+
+/*	
 	spin_unlock_irq(q->queue_lock);
 	submit_bio(REQ_SYNC, header);
 	submit_bio(REQ_SYNC, data);   //need to check order of header and data.
 	spin_lock_irq(q->queue_lock);
-	
+
+	*/
 }
 
 /*
@@ -2419,10 +2504,14 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 			//return NULL;
 		}
 	}
-	
+
+	scsi_shrd_submit_bio(REQ_SYNC, bio);
+/*	
 	spin_unlock_irq(q->queue_lock);
 	submit_bio(REQ_SYNC, bio);
 	spin_lock_irq(q->queue_lock);
+
+	*/
 	
 }
 
