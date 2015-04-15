@@ -1903,10 +1903,6 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 	 */
 	init_request_from_bio(req, bio);
 
-	if (test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags))
-		req->cpu = raw_smp_processor_id();
-
-	blk_account_io_start(req, true);
 	__elv_add_request(q, req, where);
 
 }
@@ -1921,26 +1917,6 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio){
 	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
 
 	bio->bi_rw |= rw;
-
-	/*
-	 * If it's a regular read/write or a barrier with data attached,
-	 * go through the normal accounting stuff before submission.
-	 */
-	if (bio_has_data(bio)) {
-		unsigned int count;
-
-		if (unlikely(rw & REQ_WRITE_SAME))
-			count = bdev_logical_block_size(bio->bi_bdev) >> 9;
-		else
-			count = bio_sectors(bio);
-
-		if (rw & WRITE) {
-			count_vm_events(PGPGOUT, count);
-		} else {
-			task_io_account_read(bio->bi_iter.bi_size);
-			count_vm_events(PGPGIN, count);
-		}
-	}
 
 	scsi_shrd_blk_queue_bio(q, bio);
 }
@@ -2255,7 +2231,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 	
 	if(bio->bi_rw | REQ_SHRD_TWRITE_HDR){
 		struct SHRD_TWRITE *twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
-		sdev_printk(KERN_INFO, sdev, "%s: twrite block: %d, nr_request: %d, phys_segment: %d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
+		sdev_printk(KERN_INFO, sdev, "%s: twrite hdr completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 	}
 	else if(bio->bi_rw | REQ_SHRD_TWRITE_DAT){
 		struct SHRD_TWRITE *twrite_entry;
@@ -2265,12 +2241,19 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		BUG_ON(!twrite_entry);
 
+		sdev_printk(KERN_INFO, sdev, "%s: twrite data completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
+
 		list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
+			if(!prq)
+				BUG();
+			sdev_printk(KERN_INFO, sdev, "%s: completion start, prq pos: %d, sectors: %d\n", __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
+			
 			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
 			BUG_ON(ret);
 			spin_lock_irqsave(prq->q->queue_lock, flags);
 			blk_finish_request(prq, 0);
 			spin_unlock_irqrestore(prq->q->queue_lock, flags);
+			sdev_printk(KERN_INFO, sdev, "%s: completion end, prq pos: %d, sectors: %d\n", __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 		}
 
 		shrd_put_twrite_entry(shrd, twrite_entry);
@@ -2712,9 +2695,9 @@ static void scsi_request_fn(struct request_queue *q)
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle generic write function\n", __func__);
 				
 			}
+			if (!(req->cmd_flags & REQ_DONTPREP))
+				scsi_shrd_prep_req(q, req);
 		}
-		if (!(req->cmd_flags & REQ_DONTPREP))
-			scsi_shrd_prep_req(q, req);
 #endif
 		if (unlikely(!scsi_device_online(sdev))) {
 			sdev_printk(KERN_ERR, sdev,
