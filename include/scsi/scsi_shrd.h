@@ -97,6 +97,8 @@ struct SHRD_TWRITE{
 	struct list_head twrite_cmd_list;  //is used for ongoing list and free cmd list
 	struct list_head req_list; //'struct request' entries from twrite data will be listed from here.
 	struct SHRD_TWRITE_HEADER *twrite_hdr;
+	struct bio *header;
+	struct bio *data;
 	u32 blocks;
 	u32 phys_segments;
 	u8 nr_requests;
@@ -186,6 +188,8 @@ static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 	entry->nr_requests = 0;
 	entry->phys_segments = 0;
 	entry->in_use = 0;
+	entry->header = NULL;
+	entry->data = NULL;
 	memset(entry->twrite_hdr, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
 
 }

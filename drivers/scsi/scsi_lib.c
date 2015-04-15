@@ -1618,7 +1618,6 @@ static void scsi_kill_request(struct request *req, struct request_queue *q)
 static void scsi_softirq_done(struct request *rq)
 {
 	struct scsi_cmnd *cmd = rq->special;
-	struct scsi_device *sdev = cmd->device;
 	unsigned long wait_for = (cmd->allowed + 1) * rq->timeout;
 	int disposition;
 
@@ -1903,6 +1902,11 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 	 */
 	init_request_from_bio(req, bio);
 
+	if (test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags))
+		req->cpu = raw_smp_processor_id();
+
+	blk_account_io_start(req, true);
+
 	__elv_add_request(q, req, where);
 
 }
@@ -1917,6 +1921,26 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio){
 	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
 
 	bio->bi_rw |= rw;
+
+	/*
+	 * If it's a regular read/write or a barrier with data attached,
+	 * go through the normal accounting stuff before submission.
+	 */
+	if (bio_has_data(bio)) {
+		unsigned int count;
+
+		if (unlikely(rw & REQ_WRITE_SAME))
+			count = bdev_logical_block_size(bio->bi_bdev) >> 9;
+		else
+			count = bio_sectors(bio);
+
+		if (rw & WRITE) {
+			count_vm_events(PGPGOUT, count);
+		} else {
+			task_io_account_read(bio->bi_iter.bi_size);
+			count_vm_events(PGPGIN, count);
+		}
+	}
 
 	scsi_shrd_blk_queue_bio(q, bio);
 }
@@ -2225,9 +2249,9 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 	struct SHRD *shrd = sdev->shrd;
 	u32 ret;
 
-	sdev_printk(KERN_INFO, sdev, "%s: bio request is %s, bi_sector %d, bi_size %d", __func__, 
+	sdev_printk(KERN_INFO, sdev, "%s: bio request is %s, bi_sector %d, bi_size %d, bio->bi_rw %X", __func__, 
 		(bio->bi_rw & REQ_SHRD_TWRITE_HDR) ? "twrite hdr": (bio->bi_rw & REQ_SHRD_TWRITE_DAT) ? "twrite data" : (bio->bi_rw & REQ_SHRD_REMAP) ? "remap" : "err",
-		bio->bi_iter.bi_sector, bio->bi_iter.bi_size);
+		bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_rw);
 	
 	if(bio->bi_rw | REQ_SHRD_TWRITE_HDR){
 		struct SHRD_TWRITE *twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
@@ -2378,17 +2402,24 @@ static void scsi_shrd_make_twrite_bios(struct request_queue *q, struct SHRD_TWRI
 	header = scsi_shrd_make_twrite_header_bio(q, twrite_entry);
 	if(!header){
 		sdev_printk(KERN_ERR, sdev, "%s: header is NULL\n", __func__);
+		return;
 	}
+
+	twrite_entry->header = header;
+	
 	data = scsi_shrd_make_twrite_data_bio(q, twrite_entry);
 	if(!data){
 		sdev_printk(KERN_ERR, sdev, "%s: data is NULL\n", __func__);
+		return;
 	}
+
+	twrite_entry->data = data;
 
 	sdev_printk(KERN_INFO, sdev, "%s: bio make complete, header bi_sector %d, bi_size %d, data bi_sector %d, bi_size %d\n", __func__
 		, header->bi_iter.bi_sector, header->bi_iter.bi_size, data->bi_iter.bi_sector, data->bi_iter.bi_size);
 
-	scsi_shrd_submit_bio(REQ_SYNC, data);
-	scsi_shrd_submit_bio(REQ_SYNC, header);
+	//scsi_shrd_submit_bio(REQ_SYNC, data);
+	//scsi_shrd_submit_bio(REQ_SYNC, header);
 
 /*	
 	spin_unlock_irq(q->queue_lock);
@@ -2662,6 +2693,8 @@ static void scsi_request_fn(struct request_queue *q)
 			struct SHRD_TWRITE *twrite_entry = NULL;
 			struct SHRD_REMAP *remap_entry = NULL;
 			struct bio *bio = req->bio;
+
+			sdev_printk(KERN_INFO, sdev, "%s: SHRD request handling start\n", __func__);
 			
 			if(bio->bi_rw & REQ_SHRD_TWRITE_HDR){ //handle former speical function for SHRD
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle twrite hdr request\n", __func__);
@@ -2685,6 +2718,7 @@ static void scsi_request_fn(struct request_queue *q)
 				//need twrite?
 				scsi_shrd_packing_rw_twrite(q, twrite_entry);
 				scsi_shrd_make_twrite_bios(q, twrite_entry);
+				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->header);
 				continue;
 			}
 			else if(!rq_data_dir(req)){
@@ -2706,8 +2740,11 @@ static void scsi_request_fn(struct request_queue *q)
 			continue;
 		}
 
-		if (!scsi_dev_queue_ready(q, sdev))
+		if (!scsi_dev_queue_ready(q, sdev)){
+			if(sdev->shrd_on)
+				sdev_printk(KERN_INFO, sdev, "%s: break because dev queue is not ready\n", __func__);
 			break;
+		}
 
 		/*
 		 * Remove the request from the request list.
@@ -2761,23 +2798,38 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		cmd->scsi_done = scsi_done;
 		rtn = scsi_dispatch_cmd(cmd);
-
-		if(sdev->shrd_on){
-			if(rtn == 0)
-				sdev_printk(KERN_INFO, sdev, "%s: dispatch complete\n", __func__);
-		}
 		
 		if (rtn) {
 			scsi_queue_insert(cmd, rtn);
 			spin_lock_irq(q->queue_lock);
+			if(sdev->shrd_on){
+				sdev_printk(KERN_INFO, sdev, "%s: dispatch failed, insert into queue\n", __func__);
+				if(req->bio->bi_rw | REQ_SHRD_TWRITE_HDR){
+					struct SHRD_TWRITE *entry = (struct SHRD_TWRITE *)req->bio->bi_private;
+					BUG_ON(!entry);
+					BUG_ON(!entry->data);
+					scsi_shrd_submit_bio(REQ_SYNC, entry->data);
+				}
+			}
 			goto out_delay;
 		}
 		spin_lock_irq(q->queue_lock);
+		if(sdev->shrd_on){
+			sdev_printk(KERN_INFO, sdev, "%s: dispatch complete\n", __func__);
+			if(req->bio->bi_rw | REQ_SHRD_TWRITE_HDR){
+				struct SHRD_TWRITE *entry = (struct SHRD_TWRITE *)req->bio->bi_private;
+				BUG_ON(!entry);
+				BUG_ON(!entry->data);
+				scsi_shrd_submit_bio(REQ_SYNC, entry->data);
+			}
+		}
 	}
 
 	return;
 
  host_not_ready:
+ 	if(sdev->shrd_on)
+		sdev_printk(KERN_INFO, sdev, "%s: host not ready\n", __func__);
 	if (scsi_target(sdev)->can_queue > 0)
 		atomic_dec(&scsi_target(sdev)->target_busy);
  not_ready:
@@ -2789,10 +2841,18 @@ static void scsi_request_fn(struct request_queue *q)
 	 * cases (host limits or settings) should run the queue at some
 	 * later time.
 	 */
+
+	if(sdev->shrd_on)
+		sdev_printk(KERN_INFO, sdev, "%s: not ready\n", __func__);
+	
 	spin_lock_irq(q->queue_lock);
 	blk_requeue_request(q, req);
 	atomic_dec(&sdev->device_busy);
 out_delay:
+	
+	if(sdev->shrd_on)
+		sdev_printk(KERN_INFO, sdev, "%s: out delay\n", __func__);
+	
 	if (!atomic_read(&sdev->device_busy) && !scsi_device_blocked(sdev))
 		blk_delay_queue(q, SCSI_QUEUE_DELAY);
 }
