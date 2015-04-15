@@ -2316,6 +2316,13 @@ void blk_dequeue_request(struct request *rq)
 {
 	struct request_queue *q = rq->q;
 
+#ifdef CONFIG_SCSI_SHRD_TEST0
+	//test debugging
+	if(list_empty(&rq->queuelist)){
+		printk(KERN_ERR "%s: queuelist is empty, rq pos: %d, rq sectors: %d\n", __func__, blk_rq_pos(rq), blk_rq_sectors(rq));
+	}
+#endif
+
 	BUG_ON(list_empty(&rq->queuelist));
 	BUG_ON(ELV_ON_HASH(rq));
 
