@@ -1741,17 +1741,20 @@ static void scsi_shrd_bd_init(struct request_queue *q){
 	shrd->bdev = lookup_bdev(DEV_PATH);
 	if(IS_ERR(shrd->bdev)){
 		sdev_printk(KERN_ERR, sdev, "%s: bdev lookup error\n", __func__);
+		BUG();
 		return;
 	}
 
 	if(!bdget(shrd->bdev->bd_dev)){
 		sdev_printk(KERN_ERR, sdev, "%s: bdget error\n", __func__);
+		BUG();
 		return;
 	}
 
 	if(blkdev_get(shrd->bdev, FMODE_READ | FMODE_WRITE | FMODE_EXCL, shrd)){
 		sdev_printk(KERN_ERR, sdev, "%s: blkdev_get error\n", __func__);
 		bdput(shrd->bdev);
+		BUG();
 		return;
 	}
 	
@@ -2674,6 +2677,8 @@ static void scsi_request_fn(struct request_queue *q)
 	 * the host is no longer able to accept any more requests.
 	 */
 	shost = sdev->host;
+	if(sdev->shrd_on)
+		sdev_printk(KERN_INFO, sdev, "%s: active request fn is %d\n", __func__, q->request_fn_active);
 	
 	for (;;) {
 		int rtn;
@@ -2692,9 +2697,9 @@ static void scsi_request_fn(struct request_queue *q)
 			BUG_ON(!sdev->shrd);
 			struct SHRD_TWRITE *twrite_entry = NULL;
 			struct SHRD_REMAP *remap_entry = NULL;
-			struct bio *bio = req->bio;
+			struct bio *bio = req->bio;                                                                                                                                                                                                                               
 
-			sdev_printk(KERN_INFO, sdev, "%s: SHRD request handling start\n", __func__);
+			sdev_printk(KERN_INFO, sdev, "%s: SHRD request handling start req pos: %d, sectors: %d\n", __func__, blk_rq_pos(req), blk_rq_sectors(req));
 			
 			if(bio->bi_rw & REQ_SHRD_TWRITE_HDR){ //handle former speical function for SHRD
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle twrite hdr request\n", __func__);
@@ -2806,6 +2811,7 @@ static void scsi_request_fn(struct request_queue *q)
 				sdev_printk(KERN_INFO, sdev, "%s: dispatch failed, insert into queue\n", __func__);
 				if(req->bio->bi_rw | REQ_SHRD_TWRITE_HDR){
 					struct SHRD_TWRITE *entry = (struct SHRD_TWRITE *)req->bio->bi_private;
+					sdev_printk(KERN_INFO, sdev, "%s: try to send twrite data\n", __func__);
 					BUG_ON(!entry);
 					BUG_ON(!entry->data);
 					scsi_shrd_submit_bio(REQ_SYNC, entry->data);
@@ -2818,6 +2824,7 @@ static void scsi_request_fn(struct request_queue *q)
 			sdev_printk(KERN_INFO, sdev, "%s: dispatch complete\n", __func__);
 			if(req->bio->bi_rw | REQ_SHRD_TWRITE_HDR){
 				struct SHRD_TWRITE *entry = (struct SHRD_TWRITE *)req->bio->bi_private;
+				sdev_printk(KERN_INFO, sdev, "%s: try to send twrite data\n", __func__);
 				BUG_ON(!entry);
 				BUG_ON(!entry->data);
 				scsi_shrd_submit_bio(REQ_SYNC, entry->data);
