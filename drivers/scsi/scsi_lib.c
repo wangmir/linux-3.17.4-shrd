@@ -2259,6 +2259,11 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 	if(bio->bi_rw | REQ_SHRD_TWRITE_HDR){
 		struct SHRD_TWRITE *twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		sdev_printk(KERN_INFO, sdev, "%s: twrite hdr completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
+				
+		BUG_ON(!twrite_entry);
+		BUG_ON(!twrite_entry->data);
+		scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data);
+		
 	}
 	else if(bio->bi_rw | REQ_SHRD_TWRITE_DAT){
 		struct SHRD_TWRITE *twrite_entry;
@@ -2803,33 +2808,18 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		cmd->scsi_done = scsi_done;
 		rtn = scsi_dispatch_cmd(cmd);
-		
 		if (rtn) {
 			scsi_queue_insert(cmd, rtn);
 			spin_lock_irq(q->queue_lock);
 			if(sdev->shrd_on){
-				sdev_printk(KERN_INFO, sdev, "%s: dispatch failed, insert into queue\n", __func__);
-				if(req->bio->bi_rw | REQ_SHRD_TWRITE_HDR){
-					struct SHRD_TWRITE *entry = (struct SHRD_TWRITE *)req->bio->bi_private;
-					sdev_printk(KERN_INFO, sdev, "%s: try to send twrite data\n", __func__);
-					BUG_ON(!entry);
-					BUG_ON(!entry->data);
-					scsi_shrd_submit_bio(REQ_SYNC, entry->data);
-				}
+				sdev_printk(KERN_INFO, sdev, "%s: dispatch failed, insert to midqueue\n", __func__);
 			}
 			goto out_delay;
 		}
-		spin_lock_irq(q->queue_lock);
 		if(sdev->shrd_on){
 			sdev_printk(KERN_INFO, sdev, "%s: dispatch complete\n", __func__);
-			if(req->bio->bi_rw | REQ_SHRD_TWRITE_HDR){
-				struct SHRD_TWRITE *entry = (struct SHRD_TWRITE *)req->bio->bi_private;
-				sdev_printk(KERN_INFO, sdev, "%s: try to send twrite data\n", __func__);
-				BUG_ON(!entry);
-				BUG_ON(!entry->data);
-				scsi_shrd_submit_bio(REQ_SYNC, entry->data);
-			}
 		}
+		spin_lock_irq(q->queue_lock);
 	}
 
 	return;
