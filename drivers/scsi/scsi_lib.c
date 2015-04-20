@@ -709,6 +709,11 @@ static bool scsi_end_request(struct request *req, int error,
 	struct scsi_device *sdev = cmd->device;
 	struct request_queue *q = sdev->request_queue;
 
+#ifdef CONFIG_SCSI_SHRD_TEST0
+	if(sdev->shrd_on)
+		sdev_printk(KERN_INFO, sdev, "%s: start of ending\n", __func__);
+#endif
+
 	if (blk_update_request(req, error, bytes))
 		return true;
 
@@ -753,6 +758,13 @@ static bool scsi_end_request(struct request *req, int error,
 		scsi_release_buffers(cmd);
 		scsi_next_command(cmd);
 	}
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
+
+	if(sdev->shrd_on){
+		sdev_printk(KERN_ERR, sdev, "%s: finish end request\n", __func__);
+	}
+#endif
 
 	return false;
 }
@@ -2262,7 +2274,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 				
 		BUG_ON(!twrite_entry);
 		BUG_ON(!twrite_entry->data);
-		scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data);
+		//scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data);
 		
 	}
 	else if(bio->bi_rw | REQ_SHRD_TWRITE_DAT){
@@ -2376,7 +2388,7 @@ static struct bio *scsi_shrd_make_twrite_header_bio(struct request_queue *q, str
 	if(!bio)
 		return NULL;
 
-	bio->bi_iter.bi_sector = twrite_entry->entry_num * SHRD_NUM_CORES + SHRD_CMD_START_IN_PAGE * SHRD_SECTORS_PER_PAGE;
+	bio->bi_iter.bi_sector = (twrite_entry->entry_num * SHRD_NUM_CORES + SHRD_CMD_START_IN_PAGE) * SHRD_SECTORS_PER_PAGE;
 	bio->bi_end_io = scsi_shrd_bio_endio;
 	bio->bi_rw |= REQ_WRITE | REQ_SYNC |REQ_SHRD_TWRITE_HDR;
 	bio->bi_bdev = shrd->bdev;
@@ -2700,11 +2712,17 @@ static void scsi_request_fn(struct request_queue *q)
 		if(sdev->shrd_on){
 			
 			BUG_ON(!sdev->shrd);
+
 			struct SHRD_TWRITE *twrite_entry = NULL;
 			struct SHRD_REMAP *remap_entry = NULL;
-			struct bio *bio = req->bio;                                                                                                                                                                                                                               
+			struct bio *bio = req->bio;
 
 			sdev_printk(KERN_INFO, sdev, "%s: SHRD request handling start req pos: %d, sectors: %d\n", __func__, blk_rq_pos(req), blk_rq_sectors(req));
+
+			if(req->bio){
+				if(sdev->shrd->bdev != req->bio->bi_bdev)
+					sdev_printk(KERN_ERR, sdev, "%s: shrd->bdev is different from req->bio->bi_bdev\n");
+			}
 			
 			if(bio->bi_rw & REQ_SHRD_TWRITE_HDR){ //handle former speical function for SHRD
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle twrite hdr request\n", __func__);

@@ -2426,6 +2426,18 @@ bool blk_update_request(struct request *req, int error, unsigned int nr_bytes)
 		return false;
 
 	trace_block_rq_complete(req->q, req, nr_bytes);
+	
+#ifdef CONFIG_SCSI_SHRD_TEST0
+	if(req->bio->bi_rw & REQ_SOFTBARRIER){
+		printk(KERN_ERR "%s: SHRD twrite header, pos: %d, sectors: %d, bi_rw: %X\n", __func__, blk_rq_pos(req), blk_rq_sectors(req), req->bio->bi_rw);
+	}
+	else if(req->bio->bi_rw & REQ_NOMERGE){
+		printk(KERN_ERR "%s: SHRD twrite data, pos: %d, sectors: %d, bi_rw: %X\n", __func__, blk_rq_pos(req), blk_rq_sectors(req), req->bio->bi_rw);
+	}
+	else if(req->bio->bi_rw & REQ_STARTED){
+		printk(KERN_ERR "%s: SHRD remap, pos: %d, sectors: %d, bi_rw: %X\n", __func__, blk_rq_pos(req), blk_rq_sectors(req), req->bio->bi_rw);
+	}
+#endif
 
 	/*
 	 * For fs requests, rq is just carrier of independent bio's
