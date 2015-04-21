@@ -1893,6 +1893,8 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 	int el_ret, rw_flags, where = ELEVATOR_INSERT_FRONT;
 	struct request *req;
 
+	printk("%s: start blk_queue_bio\n", __func__);
+
 	blk_queue_bounce(q, &bio);
 
 	rw_flags = bio_data_dir(bio);
@@ -1920,9 +1922,13 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 	if (test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags))
 		req->cpu = raw_smp_processor_id();
 
+	printk("%s: above blk_account_io_start\n", __func__);
+
 	blk_account_io_start(req, true);
 
 	__elv_add_request(q, req, where);
+
+	printk("%s: end blk_queue_bio\n", __func__);
 
 }
 
@@ -1934,6 +1940,8 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 static void scsi_shrd_submit_bio(int rw, struct bio *bio){
 
 	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+
+	printk("%s: start submit_bio\n", __func__);
 
 	bio->bi_rw |= rw;
 
@@ -2274,7 +2282,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 				
 		BUG_ON(!twrite_entry);
 		BUG_ON(!twrite_entry->data);
-		//scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data);
+		scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data);
 		
 	}
 	else if(bio->bi_rw | REQ_SHRD_TWRITE_DAT){
@@ -2339,7 +2347,7 @@ static struct bio* scsi_shrd_make_twrite_data_bio(struct request_queue *q, struc
 	u32 start_addr = twrite_entry->twrite_hdr->t_addr_start;
 	u32 idx = start_addr;
 
-	bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_MAX_TWRITE_ENTRY);
+	bio = bio_kmalloc(GFP_ATOMIC, SHRD_NUM_MAX_TWRITE_ENTRY);
 	if(!bio)
 		return NULL;
 
@@ -2384,7 +2392,7 @@ static struct bio *scsi_shrd_make_twrite_header_bio(struct request_queue *q, str
 	struct bio *bio;
 	int i, ret;
 
-	bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_CORES);
+	bio = bio_kmalloc(GFP_ATOMIC, SHRD_NUM_CORES);
 	if(!bio)
 		return NULL;
 
@@ -2526,7 +2534,7 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 	struct bio *bio;
 	int i, ret;
 
-	bio = bio_kmalloc(GFP_NOIO, SHRD_NUM_CORES);
+	bio = bio_kmalloc(GFP_ATOMIC, SHRD_NUM_CORES);
 	if(!bio)
 		return NULL;
 
@@ -2747,7 +2755,9 @@ static void scsi_request_fn(struct request_queue *q)
 				scsi_shrd_packing_rw_twrite(q, twrite_entry);
 				scsi_shrd_make_twrite_bios(q, twrite_entry);
 				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->header);
-				continue;
+
+				return;
+				//continue;
 			}
 			else if(!rq_data_dir(req)){
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle generic read function\n", __func__);
@@ -2779,9 +2789,19 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
 			blk_start_request(req);
+#ifdef CONFIG_SCSI_SHRD_TEST0
+		if(sdev->shrd_on)
+			sdev_printk(KERN_INFO, sdev, "%s: blk_start_request complete, will unlock irq\n", __func__);
+#endif
 
 		spin_unlock_irq(q->queue_lock);
 		cmd = req->special;
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
+		if(sdev->shrd_on)
+			sdev_printk(KERN_INFO, sdev, "%s: spin_unlock_irq complete\n", __func__);
+#endif
+
 		
 		if (unlikely(cmd == NULL)) {
 			printk(KERN_CRIT "impossible request in %s.\n"
