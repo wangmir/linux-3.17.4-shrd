@@ -1905,11 +1905,14 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 	 * Grab a free request. This is might sleep but can not fail.
 	 * Returns with the queue unlocked.
 	 */
-	req = get_request(q, rw_flags, bio, GFP_NOIO);
+	 
+	 
+	req = get_request(q, rw_flags, bio, GFP_ATOMIC);
 	if (unlikely(!req)) {
-		bio_endio(bio, -ENODEV);	/* @q is dead */
+		bio_endio(bio, -ENODEV);	// @q is dead 
 		return;
 	}
+	
 
 	/*
 	 * After dropping the lock and possibly sleeping here, our request
@@ -1924,8 +1927,9 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 
 	printk("%s: above blk_account_io_start\n", __func__);
 
-	blk_account_io_start(req, true);
+	spin_lock_irq(q->queue_lock); //it is correct?
 
+	blk_account_io_start(req, true); 
 	__elv_add_request(q, req, where);
 
 	printk("%s: end blk_queue_bio\n", __func__);
@@ -2277,13 +2281,15 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_rw);
 	
 	if(bio->bi_rw | REQ_SHRD_TWRITE_HDR){
+		unsigned long flags;
 		struct SHRD_TWRITE *twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		sdev_printk(KERN_INFO, sdev, "%s: twrite hdr completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 				
 		BUG_ON(!twrite_entry);
 		BUG_ON(!twrite_entry->data);
+		spin_lock_irqsave(shrd->bdev->bd_queue->queue_lock, flags);
 		scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data);
-		
+		spin_unlock_irqrestore(shrd->bdev->bd_queue->queue_lock, flags);
 	}
 	else if(bio->bi_rw | REQ_SHRD_TWRITE_DAT){
 		struct SHRD_TWRITE *twrite_entry;
