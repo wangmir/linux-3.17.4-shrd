@@ -1909,6 +1909,9 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 	 
 	req = get_request(q, rw_flags, bio, GFP_ATOMIC);
 	if (unlikely(!req)) {
+		printk("%s: get_request failed, BUG\n", __func__);
+		BUG();
+		panic("%s: get_request failed", __func__);
 		bio_endio(bio, -ENODEV);	// @q is dead 
 		return;
 	}
@@ -1927,7 +1930,7 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 
 	printk("%s: above blk_account_io_start\n", __func__);
 
-	spin_lock_irq(q->queue_lock); //it is correct?
+	//spin_lock_irq(q->queue_lock); //it is correct?
 
 	blk_account_io_start(req, true); 
 	__elv_add_request(q, req, where);
@@ -2296,6 +2299,9 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		struct request *prq;
 		unsigned long flags;
 
+		//test
+		BUG();
+
 		twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		BUG_ON(!twrite_entry);
 
@@ -2308,6 +2314,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			
 			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
 			BUG_ON(ret);
+			
 			spin_lock_irqsave(prq->q->queue_lock, flags);
 			blk_finish_request(prq, 0);
 			spin_unlock_irqrestore(prq->q->queue_lock, flags);

@@ -1017,8 +1017,11 @@ static struct request *__get_request(struct request_list *rl, int rw_flags,
 
 	if (blk_queue_io_stat(q))
 		rw_flags |= REQ_IO_STAT;
-	spin_unlock_irq(q->queue_lock);
 
+//test
+	if(!(gfp_mask & GFP_ATOMIC))
+		spin_unlock_irq(q->queue_lock);
+	
 	/* allocate and init request */
 	rq = mempool_alloc(rl->rq_pool, gfp_mask);
 	if (!rq)
