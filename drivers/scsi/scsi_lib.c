@@ -2283,37 +2283,34 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		(bio->bi_rw & REQ_SHRD_TWRITE_HDR) ? "twrite hdr": (bio->bi_rw & REQ_SHRD_TWRITE_DAT) ? "twrite data" : (bio->bi_rw & REQ_SHRD_REMAP) ? "remap" : "err",
 		bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_rw);
 	
-	if(bio->bi_rw | REQ_SHRD_TWRITE_HDR){
+	if(bio->bi_rw & REQ_SHRD_TWRITE_HDR){
 		unsigned long flags;
 		struct SHRD_TWRITE *twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		sdev_printk(KERN_INFO, sdev, "%s: twrite hdr completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 				
 		BUG_ON(!twrite_entry);
 		BUG_ON(!twrite_entry->data);
-		spin_lock_irqsave(shrd->bdev->bd_queue->queue_lock, flags);
-		scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data);
-		spin_unlock_irqrestore(shrd->bdev->bd_queue->queue_lock, flags);
-	}
-	else if(bio->bi_rw | REQ_SHRD_TWRITE_DAT){
-		struct SHRD_TWRITE *twrite_entry;
-		struct request *prq;
-		unsigned long flags;
 
-		//test
-		BUG();
+	}
+	else if(bio->bi_rw & REQ_SHRD_TWRITE_DAT){
+		struct SHRD_TWRITE *twrite_entry;
+		struct request *prq, *tmp;
+		unsigned long flags;
 
 		twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		BUG_ON(!twrite_entry);
 
 		sdev_printk(KERN_INFO, sdev, "%s: twrite data completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 
-		list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
+		list_for_each_entry_safe(prq, tmp, &twrite_entry->req_list, queuelist){
 			if(!prq)
 				BUG();
 			sdev_printk(KERN_INFO, sdev, "%s: completion start, prq pos: %d, sectors: %d\n", __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 			
 			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
 			BUG_ON(ret);
+
+			list_del_init(&prq->queuelist);
 			
 			spin_lock_irqsave(prq->q->queue_lock, flags);
 			blk_finish_request(prq, 0);
@@ -2323,7 +2320,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 
 		shrd_put_twrite_entry(shrd, twrite_entry);
 	}
-	else if(bio->bi_rw | REQ_SHRD_REMAP){
+	else if(bio->bi_rw & REQ_SHRD_REMAP){
 		struct SHRD_REMAP *remap_entry = (struct SHRD_REMAP *)bio->bi_private;
 		struct SHRD_REMAP_DATA *remap_data;
 		u32 i;
@@ -2745,13 +2742,13 @@ static void scsi_request_fn(struct request_queue *q)
 					sdev_printk(KERN_ERR, sdev, "%s: shrd->bdev is different from req->bio->bi_bdev\n");
 			}
 			
-			if(bio->bi_rw & REQ_SHRD_TWRITE_HDR){ //handle former speical function for SHRD
+			if(bio && bio->bi_rw & REQ_SHRD_TWRITE_HDR){ //handle former speical function for SHRD
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle twrite hdr request\n", __func__);
 			}
-			else if(bio->bi_rw & REQ_SHRD_TWRITE_DAT){
+			else if(bio && bio->bi_rw & REQ_SHRD_TWRITE_DAT){
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle twrite data request\n", __func__);
 			}
-			else if(bio->bi_rw & REQ_SHRD_REMAP){
+			else if(bio && bio->bi_rw & REQ_SHRD_REMAP){
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle remap request\n", __func__);
 			}
 			else if(remap_entry = scsi_shrd_prep_remap_if_need(q)){
@@ -2767,6 +2764,7 @@ static void scsi_request_fn(struct request_queue *q)
 				//need twrite?
 				scsi_shrd_packing_rw_twrite(q, twrite_entry);
 				scsi_shrd_make_twrite_bios(q, twrite_entry);
+				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data);
 				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->header);
 
 				return;
