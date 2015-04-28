@@ -1887,6 +1887,26 @@ fin:
 	return rtn;
 }
 
+static void scsi_shrd_request_init(struct request_queue *q, struct request *rq){
+
+	memset(rq, 0, sizeof(*rq));
+
+	INIT_LIST_HEAD(&rq->queuelist);
+	INIT_LIST_HEAD(&rq->timeout_list);
+	rq->cpu = -1;
+	rq->q = q;
+	rq->__sector = (sector_t) -1;
+	INIT_HLIST_NODE(&rq->hash);
+	RB_CLEAR_NODE(&rq->rb_node);
+	rq->cmd = rq->__cmd;
+	rq->cmd_len = BLK_MAX_CDB;
+	rq->tag = -1;
+	rq->start_time = jiffies;
+	set_start_time_ns(rq);
+	rq->part = NULL;
+
+}
+
 static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio){
 	
 	const bool sync = !!(bio->bi_rw & REQ_SYNC);
@@ -2305,7 +2325,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		list_for_each_entry_safe(prq, tmp, &twrite_entry->req_list, queuelist){
 			if(!prq)
 				BUG();
-			sdev_printk(KERN_INFO, sdev, "%s: completion start, prq pos: %d, sectors: %d\n", __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
+			//sdev_printk(KERN_INFO, sdev, "%s: completion start, prq pos: %d, sectors: %d\n", __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 			
 			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
 			BUG_ON(ret);
@@ -2315,7 +2335,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			spin_lock_irqsave(prq->q->queue_lock, flags);
 			blk_finish_request(prq, 0);
 			spin_unlock_irqrestore(prq->q->queue_lock, flags);
-			sdev_printk(KERN_INFO, sdev, "%s: completion end, prq pos: %d, sectors: %d\n", __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
+			//sdev_printk(KERN_INFO, sdev, "%s: completion end, prq pos: %d, sectors: %d\n", __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 		}
 
 		shrd_put_twrite_entry(shrd, twrite_entry);
@@ -2358,8 +2378,10 @@ static struct bio* scsi_shrd_make_twrite_data_bio(struct request_queue *q, struc
 	u32 idx = start_addr;
 
 	bio = bio_kmalloc(GFP_ATOMIC, SHRD_NUM_MAX_TWRITE_ENTRY);
-	if(!bio)
+	if(!bio){
+		BUG();
 		return NULL;
+	}
 
 	bio->bi_end_io = scsi_shrd_bio_endio;
 	bio->bi_rw |= REQ_WRITE | REQ_SYNC |REQ_SHRD_TWRITE_DAT;
@@ -2448,6 +2470,7 @@ static void scsi_shrd_make_twrite_bios(struct request_queue *q, struct SHRD_TWRI
 	data = scsi_shrd_make_twrite_data_bio(q, twrite_entry);
 	if(!data){
 		sdev_printk(KERN_ERR, sdev, "%s: data is NULL\n", __func__);
+		BUG();
 		return;
 	}
 
@@ -2767,8 +2790,8 @@ static void scsi_request_fn(struct request_queue *q)
 				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data);
 				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->header);
 
-				return;
-				//continue;
+				//return;
+				continue;
 			}
 			else if(!rq_data_dir(req)){
 				sdev_printk(KERN_INFO, sdev, "%s: SHRD handle generic read function\n", __func__);

@@ -1024,8 +1024,11 @@ static struct request *__get_request(struct request_list *rl, int rw_flags,
 	
 	/* allocate and init request */
 	rq = mempool_alloc(rl->rq_pool, gfp_mask);
-	if (!rq)
+	if (!rq){
+		if(bio->bi_rw & REQ_SOFTBARRIER || bio->bi_rw & REQ_NOMERGE || bio->bi_rw & REQ_STARTED)
+			printk(KERN_INFO"%s: mempool_alloc failed for SHRD request allocation\n", __func__);
 		goto fail_alloc;
+	}
 
 	blk_rq_init(q, rq);
 	blk_rq_set_rl(rq, rl);
