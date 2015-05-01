@@ -99,6 +99,8 @@ struct SHRD_TWRITE{
 	struct SHRD_TWRITE_HEADER *twrite_hdr;
 	struct bio *header;
 	struct bio *data;
+	struct request *header_rq;
+	struct request *data_rq;
 	u32 blocks;
 	u32 phys_segments;
 	u8 nr_requests;
@@ -125,6 +127,8 @@ struct SHRD_REMAP_DATA{
 struct SHRD_REMAP{
 	struct list_head remap_cmd_list; //is used for ongoing list and free cmd list
 	struct SHRD_REMAP_DATA *remap_data[SHRD_REMAP_DATA_PAGE];
+	struct bio *bio;
+	struct request *req;
 	u8 in_use;
 	u8 entry_num;
 };
@@ -182,6 +186,7 @@ struct SHRD{
 
 static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 
+	printk("%s: entry %llx, entry num %d\n", __func__, (u64)entry,entry->entry_num);
 	INIT_LIST_HEAD(&entry->req_list);
 	INIT_LIST_HEAD(&entry->twrite_cmd_list);
 	entry->blocks = 0;
