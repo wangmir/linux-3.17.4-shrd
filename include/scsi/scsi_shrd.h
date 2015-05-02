@@ -193,8 +193,8 @@ static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 	entry->nr_requests = 0;
 	entry->phys_segments = 0;
 	entry->in_use = 0;
-	entry->header = NULL;
-	entry->data = NULL;
+	//entry->header = NULL;
+	//entry->data = NULL;
 	memset(entry->twrite_hdr, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
 
 }

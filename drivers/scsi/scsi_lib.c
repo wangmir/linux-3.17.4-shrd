@@ -1829,6 +1829,7 @@ u32 scsi_shrd_init(struct request_queue *q){
 		//test
 		sdev->shrd->twrite_cmd[idx].header =  bio_kmalloc(GFP_KERNEL, SHRD_NUM_CORES);
 		sdev->shrd->twrite_cmd[idx].data =  bio_kmalloc(GFP_KERNEL, SHRD_NUM_MAX_TWRITE_ENTRY);
+	
 		//
 		sdev->shrd->twrite_cmd[idx].header_rq = (struct request *)kmalloc(sizeof(struct request), GFP_KERNEL);
 		sdev->shrd->twrite_cmd[idx].data_rq = (struct request *)kmalloc(sizeof(struct request), GFP_KERNEL);
@@ -2491,7 +2492,7 @@ static void scsi_shrd_make_twrite_bios(struct request_queue *q, struct SHRD_TWRI
 		return;
 	}
 
-	//twrite_entry->header = header;
+	twrite_entry->header = header;
 	
 	data = scsi_shrd_make_twrite_data_bio(q, twrite_entry);
 	if(!data){
@@ -2500,7 +2501,7 @@ static void scsi_shrd_make_twrite_bios(struct request_queue *q, struct SHRD_TWRI
 		return;
 	}
 
-	//twrite_entry->data = data;
+	twrite_entry->data = data;
 
 	sdev_printk(KERN_INFO, sdev, "%s: bio make complete, twrite_entry %llx, header bio %llx, bi_sector %u, bi_size %d, data bio %llx, bi_sector %d, bi_size %d\n", __func__
 		, (u64)twrite_entry, (u64)header, header->bi_iter.bi_sector, header->bi_iter.bi_size, (u64)data, data->bi_iter.bi_sector, data->bi_iter.bi_size);
@@ -2818,6 +2819,10 @@ static void scsi_request_fn(struct request_queue *q)
 				//need twrite?
 				scsi_shrd_packing_rw_twrite(q, twrite_entry);
 				scsi_shrd_make_twrite_bios(q, twrite_entry);
+				if(!twrite_entry->data->bi_bdev)
+					BUG();
+				if(!twrite_entry->header->bi_bdev)
+					BUG();
 				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data, twrite_entry->data_rq);
 				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->header, twrite_entry->header_rq);
 
