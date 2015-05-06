@@ -762,7 +762,7 @@ static bool scsi_end_request(struct request *req, int error,
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
 	if(sdev->shrd_on){
-		sdev_printk(KERN_ERR, sdev, "%s: finish end request\n", __func__);
+		sdev_printk(KERN_INFO, sdev, "%s: finish end request\n", __func__);
 	}
 #endif
 
@@ -1896,26 +1896,6 @@ fin:
 	return rtn;
 }
 
-static void scsi_shrd_request_init(struct request_queue *q, struct request *rq){
-
-	memset(rq, 0, sizeof(*rq));
-
-	INIT_LIST_HEAD(&rq->queuelist);
-	INIT_LIST_HEAD(&rq->timeout_list);
-	rq->cpu = -1;
-	rq->q = q;
-	rq->__sector = (sector_t) -1;
-	INIT_HLIST_NODE(&rq->hash);
-	RB_CLEAR_NODE(&rq->rb_node);
-	rq->cmd = rq->__cmd;
-	rq->cmd_len = BLK_MAX_CDB;
-	rq->tag = -1;
-	rq->start_time = jiffies;
-	set_start_time_ns(rq);
-	rq->part = NULL;
-
-}
-
 static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, struct request *req){
 	
 	const bool sync = !!(bio->bi_rw & REQ_SYNC);
@@ -2384,7 +2364,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		shrd_put_remap_entry(shrd, remap_entry);
 	}
 
-	bio_put(bio);
+	//bio_put(bio);
 }
 
 /*
