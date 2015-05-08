@@ -2086,14 +2086,14 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		sdev_printk(KERN_INFO, sdev, "%s: nopack because of tiny requests\n", __func__);
 		goto no_pack;
 	}
-
+/*
 	if(rq->rq_disk){
 		shrd->rq_disk = rq->rq_disk;
 	}
 	if(rq->bio->bi_bdev){
 		shrd->bdev = rq->bio->bi_bdev;
 	}
-	
+*/	
 	max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
 	req_sectors += blk_rq_sectors(cur);
 	phys_segments += cur->nr_phys_segments;
@@ -2339,7 +2339,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 
 		sdev_printk(KERN_INFO, sdev, "%d: %s: twrite data completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 
-		spin_lock_irqsave(bio->bi_bdev->bd_queue->queue_lock, flags);
+		//spin_lock_irqsave(bio->bi_bdev->bd_queue->queue_lock, flags);
 		list_for_each_entry_safe(prq, tmp, &twrite_entry->req_list, queuelist){
 			if(!prq)
 				BUG();
@@ -2350,16 +2350,16 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 
 			list_del_init(&prq->queuelist);
 			
-			//ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
-			ret = __blk_end_bidi_request(prq, 0,blk_rq_bytes(prq),0);
+			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
+			//ret = __blk_end_bidi_request(prq, 0,blk_rq_bytes(prq),0);
 			BUG_ON(ret);
 		
-			//spin_lock_irqsave(prq->q->queue_lock, flags);
-			//blk_finish_request(prq, 0);
-			//spin_unlock_irqrestore(prq->q->queue_lock, flags);
+			spin_lock_irqsave(prq->q->queue_lock, flags);
+			blk_finish_request(prq, 0);
+			spin_unlock_irqrestore(prq->q->queue_lock, flags);
 			sdev_printk(KERN_INFO, sdev, "%d: %s: completion end, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 		}
-		spin_unlock_irqrestore(bio->bi_bdev->bd_queue->queue_lock, flags);
+		//spin_unlock_irqrestore(bio->bi_bdev->bd_queue->queue_lock, flags);
 		shrd_put_twrite_entry(shrd, twrite_entry);
 	}
 	

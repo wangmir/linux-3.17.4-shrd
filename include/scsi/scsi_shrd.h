@@ -170,13 +170,6 @@ struct SHRD{
 	spinlock_t __jn_log_lock;
 	spinlock_t *jn_log_lock;
 
-
-	//remained command field, scsi_request_fn need to check these field first, and handle first.
-	struct scsi_cmnd *remained_twrite_header_cmd;
-	struct scsi_cmnd *remained_twrite_data_cmd;
-	struct scsi_cmnd *remained_remap_cmd;
-	struct scsi_cmnd *remained_spread_cmd;
-
 	//for REQ_TYPE_FS request handling,
 	//we need to reserve rq_disk first, and then use at making twrite request
 	struct block_device *bdev;
