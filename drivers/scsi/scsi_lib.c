@@ -2339,6 +2339,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 
 		sdev_printk(KERN_INFO, sdev, "%d: %s: twrite data completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 
+		spin_lock_irqsave(bio->bi_bdev->bd_queue->queue_lock, flags);
 		list_for_each_entry_safe(prq, tmp, &twrite_entry->req_list, queuelist){
 			if(!prq)
 				BUG();
@@ -2346,20 +2347,22 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 				BUG();
 			
 			sdev_printk(KERN_INFO, sdev, "%d: %s: completion start, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
-			
-			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
-			BUG_ON(ret);
 
 			list_del_init(&prq->queuelist);
 			
-			spin_lock_irqsave(prq->q->queue_lock, flags);
-			blk_finish_request(prq, 0);
-			spin_unlock_irqrestore(prq->q->queue_lock, flags);
+			//ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
+			ret = __blk_end_bidi_request(prq, 0,blk_rq_bytes(prq),0);
+			BUG_ON(ret);
+		
+			//spin_lock_irqsave(prq->q->queue_lock, flags);
+			//blk_finish_request(prq, 0);
+			//spin_unlock_irqrestore(prq->q->queue_lock, flags);
 			sdev_printk(KERN_INFO, sdev, "%d: %s: completion end, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 		}
-
+		spin_unlock_irqrestore(bio->bi_bdev->bd_queue->queue_lock, flags);
 		shrd_put_twrite_entry(shrd, twrite_entry);
 	}
+	
 	else if(bio->bi_rw & REQ_SHRD_REMAP){
 		struct SHRD_REMAP *remap_entry = (struct SHRD_REMAP *)bio->bi_private;
 		struct SHRD_REMAP_DATA *remap_data;
@@ -2405,6 +2408,11 @@ static struct bio* scsi_shrd_make_twrite_data_bio(struct request_queue *q, struc
 
 	bio_init(bio);
 
+	bio->bi_pool = NULL;
+	bio->bi_flags |= BIO_POOL_NONE << BIO_POOL_OFFSET;
+	bio->bi_max_vecs = SHRD_NUM_MAX_TWRITE_ENTRY;
+	bio->bi_io_vec = bio->bi_inline_vecs;
+
 	bio->bi_end_io = scsi_shrd_bio_endio;
 	bio->bi_rw |= REQ_WRITE | REQ_SYNC |REQ_SHRD_TWRITE_DAT;
 	bio->bi_iter.bi_sector = twrite_entry->twrite_hdr->t_addr_start << 3;
@@ -2417,6 +2425,7 @@ static struct bio* scsi_shrd_make_twrite_data_bio(struct request_queue *q, struc
 			len = bio_add_page(bio, (struct page *)twrite_entry->twrite_hdr, PAGE_SIZE, 0);
 			if(len < PAGE_SIZE){
 				sdev_printk(KERN_INFO, sdev, "%s: bio_add_pc_page failed on dummy padding\n", __func__);
+				BUG();
 			}
 			idx++;
 		}
@@ -2454,6 +2463,11 @@ static struct bio *scsi_shrd_make_twrite_header_bio(struct request_queue *q, str
 	}
 
 	bio_init(bio);
+
+	bio->bi_pool = NULL;
+	bio->bi_flags |= BIO_POOL_NONE << BIO_POOL_OFFSET;
+	bio->bi_max_vecs = SHRD_NUM_CORES;
+	bio->bi_io_vec = bio->bi_inline_vecs;
 
 	bio->bi_iter.bi_sector = (twrite_entry->entry_num * SHRD_NUM_CORES + SHRD_CMD_START_IN_PAGE) * SHRD_SECTORS_PER_PAGE;
 	bio->bi_end_io = scsi_shrd_bio_endio;
