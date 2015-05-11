@@ -2170,21 +2170,14 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 
-		BUG_ON(!shrd->rq_disk);
-
 		next = blk_fetch_request(q); //we need to start the request in order to get next request
-
 		
 		if(!next){
 			sdev_printk(KERN_INFO, sdev, "%s: nopack because of noreq\n", __func__);
 			put_back = false;
 			break;
 		}
-		//test for rq_disk
-		if(next->rq_disk != shrd->rq_disk){
-			sdev_printk(KERN_ERR, sdev, "%s: next->rq_disk is not same as shrd->rq_disk\n", __func__); 
-			BUG();
-		}
+
 		if(next->bio->bi_bdev != shrd->bdev){
 			sdev_printk(KERN_ERR, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
 			BUG();
@@ -2348,11 +2341,11 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			
 			sdev_printk(KERN_INFO, sdev, "%d: %s: completion start, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 
-			list_del_init(&prq->queuelist);
-			
 			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
 			//ret = __blk_end_bidi_request(prq, 0,blk_rq_bytes(prq),0);
 			BUG_ON(ret);
+			
+			list_del_init(&prq->queuelist);
 		
 			spin_lock_irqsave(prq->q->queue_lock, flags);
 			blk_finish_request(prq, 0);
