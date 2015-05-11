@@ -1854,6 +1854,7 @@ u32 scsi_shrd_init(struct request_queue *q){
 		int iter;
 
 		sdev->shrd->remap_cmd[idx].req = (struct request *)kmalloc(sizeof(struct request), GFP_KERNEL);
+		sdev->shrd->remap_cmd[idx].bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_CORES);
 		for(iter = 0; iter < SHRD_REMAP_DATA_PAGE; iter++){
 			sdev->shrd->remap_cmd[idx].remap_data[iter] = (struct SHRD_REMAP_DATA *) alloc_pages(GFP_KERNEL, 0);
 			if(sdev->shrd->remap_cmd[idx].remap_data[iter] == NULL){
@@ -2352,7 +2353,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			spin_unlock_irqrestore(prq->q->queue_lock, flags);
 			sdev_printk(KERN_INFO, sdev, "%d: %s: completion end, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 		}
-		//spin_unlock_irqrestore(bio->bi_bdev->bd_queue->queue_lock, flags);
+		//spin_unlock_irqrestore(shrd->bdev->bd_que, flags);
 		shrd_put_twrite_entry(shrd, twrite_entry);
 	}
 	
@@ -2591,9 +2592,16 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 	struct bio *bio;
 	int i;
 
-	bio = bio_kmalloc(GFP_ATOMIC, SHRD_NUM_CORES);
+	bio = remap_entry->bio;
 	if(!bio)
 		return NULL;
+
+	bio_init(bio);
+
+	bio->bi_pool = NULL;
+	bio->bi_flags |= BIO_POOL_NONE << BIO_POOL_OFFSET;
+	bio->bi_max_vecs = SHRD_NUM_CORES;
+	bio->bi_io_vec = bio->bi_inline_vecs;
 
 	bio->bi_end_io = scsi_shrd_bio_endio;
 	bio->bi_rw |= REQ_WRITE | REQ_SYNC |REQ_SHRD_REMAP;
@@ -2714,6 +2722,17 @@ static int scsi_shrd_check_read_requests(struct request_queue *q, struct request
 	u32 rq_sectors = blk_rq_sectors(rq);
 	u32 rq_pages = rq_sectors / SHRD_SECTORS_PER_PAGE + ((rq_sectors % SHRD_SECTORS_PER_PAGE == 0) ? 0 : 1);
 	u32 iter = 0;
+
+	/*
+		need to re-make read function for shrd
+		firstly, if the read request is 4KB, then just read from RW log or original location according to the situation.
+
+		but, if not, two options can be possible
+		1. REMAP: if the read request contains the page on the RW log, then remap first, and read after remap
+		2. SPLIT: if the read request contains the page on the RW log, split the read request into several pieces of new bios,
+			and complete when the all of split requests are done.
+
+	*/
 /*
 	for(iter = 0; iter < rq_pages; iter++){
 
