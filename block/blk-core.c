@@ -1017,18 +1017,12 @@ static struct request *__get_request(struct request_list *rl, int rw_flags,
 
 	if (blk_queue_io_stat(q))
 		rw_flags |= REQ_IO_STAT;
+	spin_unlock_irq(q->queue_lock);
 
-//test
-	if(!(gfp_mask & GFP_ATOMIC))
-		spin_unlock_irq(q->queue_lock);
-	
 	/* allocate and init request */
 	rq = mempool_alloc(rl->rq_pool, gfp_mask);
-	if (!rq){
-		if(bio->bi_rw & REQ_SOFTBARRIER || bio->bi_rw & REQ_NOMERGE || bio->bi_rw & REQ_STARTED)
-			printk(KERN_INFO"%s: mempool_alloc failed for SHRD request allocation\n", __func__);
+	if (!rq)
 		goto fail_alloc;
-	}
 
 	blk_rq_init(q, rq);
 	blk_rq_set_rl(rq, rl);
@@ -1120,15 +1114,9 @@ rq_starved:
  * Returns %NULL on failure, with @q->queue_lock held.
  * Returns !%NULL on success, with @q->queue_lock *not held*.
  */
-
-#ifdef CONFIG_SCSI_SHRD_TEST0
-struct request *get_request(struct request_queue *q, int rw_flags,
-				   struct bio *bio, gfp_t gfp_mask){
-#else
 static struct request *get_request(struct request_queue *q, int rw_flags,
-				   struct bio *bio, gfp_t gfp_mask){
-#endif
-
+				   struct bio *bio, gfp_t gfp_mask)
+{
 	const bool is_sync = rw_is_sync(rw_flags) != 0;
 	DEFINE_WAIT(wait);
 	struct request_list *rl;
@@ -1166,9 +1154,6 @@ retry:
 
 	goto retry;
 }
-#ifdef CONFIG_SCSI_SHRD_TEST0
-EXPORT_SYMBOL(get_request);
-#endif
 
 static struct request *blk_old_get_request(struct request_queue *q, int rw,
 		gfp_t gfp_mask)
@@ -1664,7 +1649,6 @@ get_rq:
 	} else {
 		spin_lock_irq(q->queue_lock);
 		add_acct_request(q, req, where);
-
 		__blk_run_queue(q);
 out_unlock:
 		spin_unlock_irq(q->queue_lock);
@@ -2322,13 +2306,6 @@ void blk_dequeue_request(struct request *rq)
 {
 	struct request_queue *q = rq->q;
 
-#ifdef CONFIG_SCSI_SHRD_TEST0
-	//test debugging
-	if(list_empty(&rq->queuelist)){
-		printk(KERN_ERR "%s: queuelist is empty, rq pos: %d, rq sectors: %d\n", __func__, blk_rq_pos(rq), blk_rq_sectors(rq));
-	}
-#endif
-
 	BUG_ON(list_empty(&rq->queuelist));
 	BUG_ON(ELV_ON_HASH(rq));
 
@@ -2432,20 +2409,6 @@ bool blk_update_request(struct request *req, int error, unsigned int nr_bytes)
 		return false;
 
 	trace_block_rq_complete(req->q, req, nr_bytes);
-	
-#ifdef CONFIG_SCSI_SHRD_TEST0
-
-	if(req->bio->bi_rw & REQ_SOFTBARRIER){
-		printk(KERN_INFO "%s: SHRD twrite header, pos: %d, sectors: %d, bi_rw: %X\n", __func__, blk_rq_pos(req), blk_rq_sectors(req), req->bio->bi_rw);
-	}
-	else if(req->bio->bi_rw & REQ_NOMERGE){
-		printk(KERN_INFO "%s: SHRD twrite data, pos: %d, sectors: %d, bi_rw: %X\n", __func__, blk_rq_pos(req), blk_rq_sectors(req), req->bio->bi_rw);
-	}
-	else if(req->bio->bi_rw & REQ_STARTED){
-		printk(KERN_INFO "%s: SHRD remap, pos: %d, sectors: %d, bi_rw: %X\n", __func__, blk_rq_pos(req), blk_rq_sectors(req), req->bio->bi_rw);
-	}
-	
-#endif
 
 	/*
 	 * For fs requests, rq is just carrier of independent bio's

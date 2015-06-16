@@ -86,7 +86,6 @@ enum rq_cmd_type_bits {
 	 */
 	REQ_TYPE_ATA_TASKFILE,
 	REQ_TYPE_ATA_PC,
-
 };
 
 #define BLK_MAX_CDB	16
@@ -796,9 +795,6 @@ extern void blk_unregister_queue(struct gendisk *disk);
 extern void generic_make_request(struct bio *bio);
 extern void blk_rq_init(struct request_queue *q, struct request *rq);
 extern void blk_put_request(struct request *);
-#ifdef CONFIG_SCSI_SHRD_TEST0
-extern struct request *get_request(struct request_queue *, int , struct bio *, gfp_t);
-#endif
 extern void __blk_put_request(struct request_queue *, struct request *);
 extern struct request *blk_get_request(struct request_queue *, int, gfp_t);
 extern struct request *blk_make_request(struct request_queue *, struct bio *,

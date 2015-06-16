@@ -362,6 +362,7 @@ void end_buffer_async_write(struct buffer_head *bh, int uptodate)
 	BUG_ON(!buffer_async_write(bh));
 
 	page = bh->b_page;
+
 	if (uptodate) {
 		set_buffer_uptodate(bh);
 	} else {
@@ -2957,8 +2958,9 @@ static void end_bio_bh_io_sync(struct bio *bio, int err)
 
 	if (unlikely (test_bit(BIO_QUIET,&bio->bi_flags)))
 		set_bit(BH_Quiet, &bh->b_state);
-
+	
 	bh->b_end_io(bh, test_bit(BIO_UPTODATE, &bio->bi_flags));
+
 	bio_put(bio);
 }
 

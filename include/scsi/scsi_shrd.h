@@ -188,7 +188,9 @@ static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 	entry->in_use = 0;
 	//entry->header = NULL;
 	//entry->data = NULL;
-	memset(entry->twrite_hdr, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
+
+	BUG_ON(!entry->twrite_hdr);
+	memset(entry->twrite_hdr, 0x00, PAGE_SIZE);
 
 }
 
@@ -196,7 +198,9 @@ static inline void shrd_clear_remap_entry(struct SHRD_REMAP* entry){
 
 	INIT_LIST_HEAD(&entry->remap_cmd_list);
 	entry->in_use = 0;
-	memset(entry->remap_data, 0x00, sizeof(struct SHRD_REMAP_DATA));
+
+	
+	memset(entry->remap_data, 0x00, PAGE_SIZE);
 }
 
 

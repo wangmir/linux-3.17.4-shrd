@@ -714,6 +714,7 @@ static bool scsi_end_request(struct request *req, int error,
 		sdev_printk(KERN_INFO, sdev, "%s: start of ending\n", __func__);
 #endif
 
+
 	if (blk_update_request(req, error, bytes))
 		return true;
 
@@ -1119,6 +1120,7 @@ static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb,
 	if(((struct scsi_device *)req->q->queuedata)->shrd_on)
 		sdev_printk(KERN_INFO, (struct scsi_device *)req->q->queuedata, "%s: nents %d, sectors %d\n", __func__, count, blk_rq_sectors(req));
 #endif
+
 
 	return BLKPREP_OK;
 }
@@ -1813,7 +1815,6 @@ u32 scsi_shrd_init(struct request_queue *q){
 
 	memset(sdev->shrd->shrd_jn_map, 0x00, sizeof(struct SHRD_MAP) * SHRD_JN_LOG_SIZE_IN_PAGE);
 
-	//WARNING::we need to change this. twrite_header should be allocated separatedly from twrite_cmd (as buddy, alloc_page)
 	sdev->shrd->twrite_cmd = (struct SHRD_TWRITE *)kmalloc(sizeof(struct SHRD_TWRITE) * SHRD_TWRITE_ENTRIES, GFP_KERNEL);
 	if(sdev->shrd->twrite_cmd == NULL){
 		rtn = 1;
@@ -1825,7 +1826,11 @@ u32 scsi_shrd_init(struct request_queue *q){
 	}
 
 	for(idx = 0; idx < SHRD_TWRITE_ENTRIES; idx++){
-		sdev->shrd->twrite_cmd[idx].twrite_hdr = (struct SHRD_TWRITE_HEADER *) alloc_pages(GFP_KERNEL, 0);
+		//sdev->shrd->twrite_cmd[idx].twrite_hdr = (struct SHRD_TWRITE_HEADER *) alloc_pages(GFP_KERNEL, 0);
+		sdev->shrd->twrite_cmd[idx].twrite_hdr = (struct SHRD_TWRITE_HEADER *) __get_free_page(GFP_KERNEL);
+		if(sdev->shrd->twrite_cmd[idx].twrite_hdr == NULL){
+			printk("SHRD:: alloc failed during 4KB twrite header, what should i do?\n");
+		}
 		//test
 		sdev->shrd->twrite_cmd[idx].header =  bio_kmalloc(GFP_KERNEL, SHRD_NUM_CORES);
 		sdev->shrd->twrite_cmd[idx].data =  bio_kmalloc(GFP_KERNEL, SHRD_NUM_MAX_TWRITE_ENTRY);
@@ -1833,9 +1838,6 @@ u32 scsi_shrd_init(struct request_queue *q){
 		//
 		sdev->shrd->twrite_cmd[idx].header_rq = (struct request *)kmalloc(sizeof(struct request), GFP_KERNEL);
 		sdev->shrd->twrite_cmd[idx].data_rq = (struct request *)kmalloc(sizeof(struct request), GFP_KERNEL);
-		if(sdev->shrd->twrite_cmd[idx].twrite_hdr == NULL){
-			printk("SHRD:: alloc failed during 4KB twrite header, what should i do?\n");
-		}
 	}
 
 	sdev->shrd->remap_cmd = (struct SHRD_REMAP *)kmalloc(sizeof(struct SHRD_REMAP) * SHRD_REMAP_ENTRIES, GFP_KERNEL);
@@ -1856,7 +1858,7 @@ u32 scsi_shrd_init(struct request_queue *q){
 		sdev->shrd->remap_cmd[idx].req = (struct request *)kmalloc(sizeof(struct request), GFP_KERNEL);
 		sdev->shrd->remap_cmd[idx].bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_CORES);
 		for(iter = 0; iter < SHRD_REMAP_DATA_PAGE; iter++){
-			sdev->shrd->remap_cmd[idx].remap_data[iter] = (struct SHRD_REMAP_DATA *) alloc_pages(GFP_KERNEL, 0);
+			sdev->shrd->remap_cmd[idx].remap_data[iter] = (struct SHRD_REMAP_DATA *) __get_free_page(GFP_KERNEL);
 			if(sdev->shrd->remap_cmd[idx].remap_data[iter] == NULL){
 				printk("SHRD:: alloc failed during 4KB remap data, what should i do?\n");
 			}
@@ -1910,9 +1912,6 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, st
 	rw_flags = bio_data_dir(bio);
 	if (sync)
 		rw_flags |= REQ_SYNC;
-	 
-	//req = get_request(q, rw_flags, bio, GFP_ATOMIC);
-	//req = kmalloc(sizeof(struct request), GFP_ATOMIC);
 
 	//blk_rq_init
 	memset(req, 0, sizeof(*req));
@@ -1953,8 +1952,6 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, st
 		req->cpu = raw_smp_processor_id();
 
 	printk("%s: above blk_account_io_start\n", __func__);
-
-	//spin_lock_irq(q->queue_lock); //it is correct?
 
 	blk_account_io_start(req, true); 
 	__elv_add_request(q, req, where);
@@ -2087,14 +2084,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		sdev_printk(KERN_INFO, sdev, "%s: nopack because of tiny requests\n", __func__);
 		goto no_pack;
 	}
-/*
-	if(rq->rq_disk){
-		shrd->rq_disk = rq->rq_disk;
-	}
-	if(rq->bio->bi_bdev){
-		shrd->bdev = rq->bio->bi_bdev;
-	}
-*/	
+
 	max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
 	req_sectors += blk_rq_sectors(cur);
 	phys_segments += cur->nr_phys_segments;
@@ -2333,7 +2323,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 
 		sdev_printk(KERN_INFO, sdev, "%d: %s: twrite data completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 
-		//spin_lock_irqsave(bio->bi_bdev->bd_queue->queue_lock, flags);
+		//spin_lock_irqsave(shrd->bdev->bd_queue->queue_lock, flags);
 		list_for_each_entry_safe(prq, tmp, &twrite_entry->req_list, queuelist){
 			if(!prq)
 				BUG();
@@ -2353,7 +2343,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			spin_unlock_irqrestore(prq->q->queue_lock, flags);
 			sdev_printk(KERN_INFO, sdev, "%d: %s: completion end, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 		}
-		//spin_unlock_irqrestore(shrd->bdev->bd_que, flags);
+		//spin_unlock_irqrestore(shrd->bdev->bd_queue->queue_lock, flags);
 		shrd_put_twrite_entry(shrd, twrite_entry);
 	}
 	
@@ -2770,8 +2760,10 @@ static void scsi_request_fn(struct request_queue *q)
 	 * the host is no longer able to accept any more requests.
 	 */
 	shost = sdev->host;
+	
 	if(sdev->shrd_on)
 		sdev_printk(KERN_INFO, sdev, "%d: %s: active request fn is %d\n", smp_processor_id(), __func__, q->request_fn_active);
+	
 	
 	for (;;) {
 		int rtn;
@@ -2781,9 +2773,12 @@ static void scsi_request_fn(struct request_queue *q)
 		 * accept it.
 		 */
 		req = blk_peek_request(q);
+		
 		if (!req){
+			
 			if(sdev->shrd_on)
 				sdev_printk(KERN_INFO, sdev, "%d: %s: break because req NULL on peek\n", smp_processor_id(), __func__);
+
 			break;
 
 		}
@@ -2798,11 +2793,12 @@ static void scsi_request_fn(struct request_queue *q)
 			struct bio *bio = req->bio;
 
 			sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
-
+			
 			if(req->bio){
 				if(sdev->shrd->bdev != req->bio->bi_bdev)
 					sdev_printk(KERN_ERR, sdev, "%d: %s: shrd->bdev is different from req->bio->bi_bdev\n", smp_processor_id(), __func__);
 			}
+			
 			
 			if(bio && bio->bi_rw & REQ_SHRD_TWRITE_HDR){ //handle former speical function for SHRD
 				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle twrite hdr request\n",smp_processor_id(), __func__);
@@ -2861,8 +2857,10 @@ spcmd:
 		}
 
 		if (!scsi_dev_queue_ready(q, sdev)){
+			
 			if(sdev->shrd_on)
 				sdev_printk(KERN_INFO, sdev, "%s: break because dev queue is not ready\n", __func__);
+				
 			break;
 		}
 
@@ -2871,10 +2869,12 @@ spcmd:
 		 */
 		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
 			blk_start_request(req);
+		
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on)
 			sdev_printk(KERN_INFO, sdev, "%d: %s: blk_start_request complete, will unlock irq\n", smp_processor_id(), __func__);
 #endif
+
 
 		spin_unlock_irq(q->queue_lock);
 		cmd = req->special;
@@ -2883,6 +2883,7 @@ spcmd:
 		if(sdev->shrd_on)
 			sdev_printk(KERN_INFO, sdev, "%d: %s: spin_unlock_irq complete\n", smp_processor_id(), __func__);
 #endif
+
 
 		
 		if (unlikely(cmd == NULL)) {
@@ -2948,7 +2949,6 @@ spcmd:
 
 	if(sdev->shrd_on)
 		sdev_printk(KERN_INFO, sdev, "%d: %s: return\n", smp_processor_id(), __func__);
-		
 	return;
 
  host_not_ready:
@@ -2970,16 +2970,13 @@ spcmd:
 
 	if(sdev->shrd_on)
 		sdev_printk(KERN_INFO, sdev, "%s: not ready\n", __func__);
-		
 	
 	spin_lock_irq(q->queue_lock);
 	blk_requeue_request(q, req);
 	atomic_dec(&sdev->device_busy);
 out_delay:
-	
 	if(sdev->shrd_on)
 		sdev_printk(KERN_INFO, sdev, "%s: out delay\n", __func__);
-		
 	
 	if (!atomic_read(&sdev->device_busy) && !scsi_device_blocked(sdev))
 		blk_delay_queue(q, SCSI_QUEUE_DELAY);
