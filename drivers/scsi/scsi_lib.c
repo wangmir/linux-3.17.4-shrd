@@ -2406,7 +2406,7 @@ static struct bio* scsi_shrd_make_twrite_data_bio(struct request_queue *q, struc
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
 		if((idx & 0x1) != ((blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 			//padding
-			len = bio_add_page(bio, (struct page *)twrite_entry->twrite_hdr, PAGE_SIZE, 0);
+			len = bio_add_page(bio, virt_to_page((void *)twrite_entry->twrite_hdr), PAGE_SIZE, 0);
 			if(len < PAGE_SIZE){
 				sdev_printk(KERN_INFO, sdev, "%s: bio_add_pc_page failed on dummy padding\n", __func__);
 				BUG();
@@ -2460,7 +2460,7 @@ static struct bio *scsi_shrd_make_twrite_header_bio(struct request_queue *q, str
 	bio->bi_private = twrite_entry;
 
 	for(i=0; i < SHRD_NUM_CORES; i++){
-		if(bio_add_page(bio, (struct page *)twrite_entry->twrite_hdr, PAGE_SIZE, 0) < PAGE_SIZE){
+		if(bio_add_page(bio, virt_to_page((void *)twrite_entry->twrite_hdr), PAGE_SIZE, 0) < PAGE_SIZE){
 			sdev_printk(KERN_INFO, sdev, "%s: SHRD bio_add_pc_page failed on CORE %d\n", __func__, i);
 			BUG();
 			return NULL;
