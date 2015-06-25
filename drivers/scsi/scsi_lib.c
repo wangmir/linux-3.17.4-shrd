@@ -2312,6 +2312,9 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		struct SHRD_TWRITE *twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		sdev_printk(KERN_INFO, sdev, "%d: %s: twrite hdr completion: twrite: %llx, block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__, (u64)twrite_entry, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 		BUG_ON(!twrite_entry);
+
+		//error handling check: should we need to wait for the twrite header completion before send twrite data?
+		scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data, twrite_entry->data_rq); 
 	}
 	else if(bio->bi_rw & REQ_SHRD_TWRITE_DAT){
 		struct SHRD_TWRITE *twrite_entry;
@@ -2461,6 +2464,7 @@ static struct bio *scsi_shrd_make_twrite_header_bio(struct request_queue *q, str
 
 	for(i=0; i < SHRD_NUM_CORES; i++){
 		if(bio_add_page(bio, virt_to_page((void *)twrite_entry->twrite_hdr), PAGE_SIZE, 0) < PAGE_SIZE){
+		//if(bio_add_page(bio, (struct page *)twrite_entry->twrite_hdr, PAGE_SIZE, 0) < PAGE_SIZE){
 			sdev_printk(KERN_INFO, sdev, "%s: SHRD bio_add_pc_page failed on CORE %d\n", __func__, i);
 			BUG();
 			return NULL;
@@ -2547,7 +2551,7 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 		if((idx & 0x1) != ((blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 			//need padding
 			
-			header->o_addr[idx] = SHRD_INVALID_LPN;
+			header->o_addr[idx - shrd->rw_log_new_idx] = SHRD_INVALID_LPN;
 			idx++;
 
 			if(idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
@@ -2556,10 +2560,10 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 
 		for(i = 0; i < blk_rq_sectors(prq) / SHRD_SECTORS_PER_PAGE; i++){
 			
-			header->o_addr[idx] = blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE + i;
+			header->o_addr[idx -shrd->rw_log_new_idx] = blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE + i;
 			
 			shrd->shrd_rw_map[idx].t_addr = SHRD_RW_LOG_START_IN_PAGE+ idx;
-			shrd->shrd_rw_map[idx].o_addr = header->o_addr[idx];
+			shrd->shrd_rw_map[idx].o_addr = header->o_addr[idx - shrd->rw_log_new_idx];
 			
 			BUG_ON(shrd->shrd_rw_map[idx].flags == SHRD_VALID_MAP); //should be remapped
 			shrd->shrd_rw_map[idx].flags = SHRD_VALID_MAP;
@@ -2829,7 +2833,10 @@ static void scsi_request_fn(struct request_queue *q)
 					BUG();
 				if(!twrite_entry->header->bi_bdev)
 					BUG();
-				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data, twrite_entry->data_rq);
+
+				//error handling check: should we need to wait for the twrite header completion before send twrite data?
+				//scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data, twrite_entry->data_rq);
+
 				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->header, twrite_entry->header_rq);
 
 				continue;

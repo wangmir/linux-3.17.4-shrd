@@ -284,7 +284,7 @@ enum blk_eh_timer_return scsi_times_out(struct request *req)
 	if(!scmd){
 		printk(KERN_ERR "%s: %d: scmd is NULL, dump req\n", __func__, smp_processor_id());
 		printk(KERN_ERR "%s: %d: req cmd_flags %u, sectors %u, pos: %u\n", __func__, smp_processor_id(), req->cmd_flags, blk_rq_sectors(req), blk_rq_pos(req));
-		BUG();
+		return rtn;
 	}
 	BUG_ON(!scmd);
 	BUG_ON(!scmd->device);
