@@ -179,7 +179,7 @@ struct SHRD{
 
 static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 
-	printk("%s: entry %llx, entry num %d\n", __func__, (u64)entry,entry->entry_num);
+	printk("%d: %s: entry %llx, entry num %d\n", smp_processor_id(), __func__, (u64)entry,entry->entry_num);
 	INIT_LIST_HEAD(&entry->req_list);
 	INIT_LIST_HEAD(&entry->twrite_cmd_list);
 	entry->blocks = 0;
@@ -200,7 +200,7 @@ static inline void shrd_clear_remap_entry(struct SHRD_REMAP* entry){
 	entry->in_use = 0;
 
 	
-	memset(entry->remap_data, 0x00, PAGE_SIZE);
+	memset(entry->remap_data[0], 0x00, PAGE_SIZE);
 }
 
 

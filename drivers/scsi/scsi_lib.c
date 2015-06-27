@@ -2333,7 +2333,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			if(!prq->bio)
 				BUG();
 			
-			sdev_printk(KERN_INFO, sdev, "%d: %s: completion start, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
+			//sdev_printk(KERN_INFO, sdev, "%d: %s: completion start, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 
 			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
 			//ret = __blk_end_bidi_request(prq, 0,blk_rq_bytes(prq),0);
@@ -2344,7 +2344,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			spin_lock_irqsave(prq->q->queue_lock, flags);
 			blk_finish_request(prq, 0);
 			spin_unlock_irqrestore(prq->q->queue_lock, flags);
-			sdev_printk(KERN_INFO, sdev, "%d: %s: completion end, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
+			//sdev_printk(KERN_INFO, sdev, "%d: %s: completion end, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 		}
 		//spin_unlock_irqrestore(shrd->bdev->bd_queue->queue_lock, flags);
 		shrd_put_twrite_entry(shrd, twrite_entry);
@@ -2357,6 +2357,8 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 
 		BUG_ON(!remap_entry);
 		remap_data = remap_entry->remap_data[0];
+
+		sdev_printk(KERN_INFO, sdev, "%d: %s: remap completion: entry_num: %u\n", smp_processor_id(), __func__, remap_entry->entry_num);
 
 		for(i = 0; i < remap_data->remap_count; i++){
 			scsi_shrd_map_remove(remap_data->o_addr[i], &shrd->rw_mapping);
@@ -2610,6 +2612,9 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 		}
 	}
 
+	sdev_printk(KERN_INFO, sdev, "%d: %s: bio make complete, remap entry %llx, bio %llx, bi_sector %u, bi_size %u\n", smp_processor_id(), __func__,
+		(u64)remap_entry, (u64)bio, bio->bi_iter.bi_sector, bio->bi_iter.bi_size);
+
 	scsi_shrd_submit_bio(REQ_SYNC, bio, remap_entry->req);
 	
 }
@@ -2620,11 +2625,11 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	struct SHRD *shrd = sdev->shrd;
 	struct rb_node *node;
 	struct SHRD_MAP *map;
-	struct SHRD_REMAP *entry;
+	struct SHRD_REMAP *entry = NULL;
 	u32 start_idx = shrd->rw_log_start_idx, end_idx;
 	u32 idx = 0, cnt = 0;
 
-	sdev_printk(KERN_INFO, sdev, "%s: do_remap\n", __func__);
+	sdev_printk(KERN_INFO, sdev, "%d: %s: do_remap\n",smp_processor_id(),  __func__);
 	
 	entry = shrd_get_remap_entry(shrd);
 	if(entry == NULL){
@@ -2633,6 +2638,8 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	}
 	list_del(&entry->remap_cmd_list);
 	shrd_clear_remap_entry(entry);
+
+	BUG_ON(!entry->remap_data[0]);
 
 	for(idx = 0; idx < size; idx++){
 		u32 log_idx = idx + start_idx;
@@ -2704,7 +2711,8 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 	if(size > SHRD_RW_REMAP_THRESHOLD_IN_PAGE){
 		//need to remap
 		remap_entry = __scsi_shrd_do_remap_rw_log(q, size);
-		sdev_printk(KERN_INFO, sdev, "%s: return valid remap entry\n", __func__);
+		BUG_ON(!remap_entry);
+		sdev_printk(KERN_INFO, sdev, "%d: %s: return valid remap entry\n", smp_processor_id(), __func__);
 	}
 
 	return remap_entry;
@@ -2877,22 +2885,9 @@ spcmd:
 		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
 			blk_start_request(req);
 		
-#ifdef CONFIG_SCSI_SHRD_TEST0
-		if(sdev->shrd_on)
-			sdev_printk(KERN_INFO, sdev, "%d: %s: blk_start_request complete, will unlock irq\n", smp_processor_id(), __func__);
-#endif
-
-
 		spin_unlock_irq(q->queue_lock);
 		cmd = req->special;
 
-#ifdef CONFIG_SCSI_SHRD_TEST0
-		if(sdev->shrd_on)
-			sdev_printk(KERN_INFO, sdev, "%d: %s: spin_unlock_irq complete\n", smp_processor_id(), __func__);
-#endif
-
-
-		
 		if (unlikely(cmd == NULL)) {
 			printk(KERN_CRIT "impossible request in %s.\n"
 					 "please mail a stack trace to "
@@ -2940,22 +2935,15 @@ spcmd:
 			scsi_queue_insert(cmd, rtn);
 			spin_lock_irq(q->queue_lock);
 			
-			if(sdev->shrd_on){
-				sdev_printk(KERN_INFO, sdev, "%d: %s: dispatch failed, insert to midqueue\n", smp_processor_id(), __func__);
-			}
-			
 			goto out_delay;
 		}
 		
 		if(sdev->shrd_on){
 			sdev_printk(KERN_INFO, sdev, "%d: %s: dispatch complete,req pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
 		}
-		
 		spin_lock_irq(q->queue_lock);
 	}
 
-	if(sdev->shrd_on)
-		sdev_printk(KERN_INFO, sdev, "%d: %s: return\n", smp_processor_id(), __func__);
 	return;
 
  host_not_ready:
