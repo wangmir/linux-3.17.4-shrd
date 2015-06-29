@@ -2253,31 +2253,6 @@ no_pack:
 	return twrite_entry;
 }
 
-static void scsi_shrd_setup_cmd(struct request *req, sector_t block, sector_t this_count, u8 direction){
-
-	req->__sector = block;
-	req->__data_len = this_count << 9;
-	
-	if (direction == WRITE) {
-		req->cmd[0] = WRITE_6;
-
-	} else if (direction == READ) {
-		req->cmd[0] = READ_6;
-	}
-	req->cmd[0] += READ_10 - READ_6;
-	req->cmd[1] = 0;
-	req->cmd[2] = (unsigned char) (block >> 24) & 0xff;
-	req->cmd[3] = (unsigned char) (block >> 16) & 0xff;
-	req->cmd[4] = (unsigned char) (block >> 8) & 0xff;
-	req->cmd[5] = (unsigned char) block & 0xff;
-	req->cmd[6] = req->cmd[9] = 0;
-	req->cmd[7] = (unsigned char) (this_count >> 8) & 0xff;
-	req->cmd[8] = (unsigned char) this_count & 0xff;
-
-	req->cmd_len = 10;
-	
-}
-
 static void scsi_shrd_bio_put(struct bio *bio){
 
 	BIO_BUG_ON(!atomic_read(&bio->bi_cnt));
@@ -2508,8 +2483,8 @@ static void scsi_shrd_make_twrite_bios(struct request_queue *q, struct SHRD_TWRI
 
 	twrite_entry->data = data;
 
-	sdev_printk(KERN_INFO, sdev, "%s: bio make complete, twrite_entry %llx, header bio %llx, bi_sector %u, bi_size %d, data bio %llx, bi_sector %d, bi_size %d\n", __func__
-		, (u64)twrite_entry, (u64)header, header->bi_iter.bi_sector, header->bi_iter.bi_size, (u64)data, data->bi_iter.bi_sector, data->bi_iter.bi_size);
+	sdev_printk(KERN_INFO, sdev, "%s: bio make complete, twrite_entry %llx, header bio %llx, bi_sector %u, bi_size %d, data bio %llx, bi_sector %u, bi_size %u\n", __func__
+		, (u64)twrite_entry, (u64)header, (u32)header->bi_iter.bi_sector, (u32)header->bi_iter.bi_size, (u64)data, (u32)data->bi_iter.bi_sector, (u32)data->bi_iter.bi_size);
 }
 
 /*
@@ -2522,9 +2497,7 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 	struct SHRD *shrd = sdev->shrd;
 	struct SHRD_TWRITE_HEADER *header = twrite_entry->twrite_hdr;
 	u32 idx = 0, sectors = twrite_entry->blocks, end;
-	u32 cnt = 0;
 
-	
 	memset(header, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
 
 	//fill header with data
@@ -2589,8 +2562,10 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 	int i;
 
 	bio = remap_entry->bio;
-	if(!bio)
-		return NULL;
+	if(!bio){
+		BUG();
+		return;
+	}
 
 	bio_init(bio);
 
@@ -2613,7 +2588,7 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 	}
 
 	sdev_printk(KERN_INFO, sdev, "%d: %s: bio make complete, remap entry %llx, bio %llx, bi_sector %u, bi_size %u\n", smp_processor_id(), __func__,
-		(u64)remap_entry, (u64)bio, bio->bi_iter.bi_sector, bio->bi_iter.bi_size);
+		(u64)remap_entry, (u64)bio, (u32)bio->bi_iter.bi_sector, (u32)bio->bi_iter.bi_size);
 
 	scsi_shrd_submit_bio(REQ_SYNC, bio, remap_entry->req);
 	
@@ -2689,6 +2664,7 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 		if(idx == cnt)
 			break;
 	}
+	return entry;
 
 }
 
@@ -2720,11 +2696,11 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 }
 
 static int scsi_shrd_check_read_requests(struct request_queue *q, struct request *rq){
-
+/*
 	u32 rq_sectors = blk_rq_sectors(rq);
 	u32 rq_pages = rq_sectors / SHRD_SECTORS_PER_PAGE + ((rq_sectors % SHRD_SECTORS_PER_PAGE == 0) ? 0 : 1);
 	u32 iter = 0;
-
+*/
 	/*
 		need to re-make read function for shrd
 		firstly, if the read request is 4KB, then just read from RW log or original location according to the situation.
@@ -2797,14 +2773,14 @@ static void scsi_request_fn(struct request_queue *q)
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
-			
-			BUG_ON(!sdev->shrd);
 
 			struct SHRD_TWRITE *twrite_entry = NULL;
 			struct SHRD_REMAP *remap_entry = NULL;
 			struct bio *bio = req->bio;
 
-			sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
+			BUG_ON(!sdev->shrd);
+
+			sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
 			
 			if(req->bio){
 				if(sdev->shrd->bdev != req->bio->bi_bdev)
@@ -2824,14 +2800,14 @@ static void scsi_request_fn(struct request_queue *q)
 				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle remap request\n", smp_processor_id(), __func__);
 				goto spcmd;
 			}
-			else if(remap_entry = scsi_shrd_prep_remap_if_need(q)){
+			else if((remap_entry = scsi_shrd_prep_remap_if_need(q))){
 				//need remap?
 				BUG_ON(!remap_entry);
 				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle try remap\n",  smp_processor_id(), __func__);
 				scsi_shrd_make_remap_bio(q, remap_entry);
 				continue;
 			}
-			else if(twrite_entry = scsi_shrd_prep_rw_twrite(q,req)){
+			else if((twrite_entry = scsi_shrd_prep_rw_twrite(q,req))){
 				BUG_ON(!twrite_entry);
 				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle try twrite\n", smp_processor_id(), __func__);
 				//need twrite?
@@ -3227,7 +3203,6 @@ EXPORT_SYMBOL(__scsi_alloc_queue);
 
 struct request_queue *scsi_alloc_queue(struct scsi_device *sdev)
 {
-	int rtn = 0;
 	struct request_queue *q;
 
 	q = __scsi_alloc_queue(sdev->host, scsi_request_fn);
