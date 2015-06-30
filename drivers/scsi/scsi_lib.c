@@ -2641,6 +2641,8 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	for(node = rb_first(&shrd->rw_mapping); node; rb_next(node)){
 
 		map = rb_entry(node, struct SHRD_MAP, node);
+
+		sdev_printk(KERN_INFO, 
 		if(map->flags != SHRD_VALID_MAP)
 			continue;
 
