@@ -1710,23 +1710,27 @@ int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry){
 
 	struct rb_node **new = &(root->rb_node), *parent = NULL;
 
-
 	while (*new){
+		int result;
 		struct SHRD_MAP *this = container_of(*new, struct SHRD_MAP, node);
 
-		int result = map_entry->o_addr - this->o_addr;
+		if(map_entry->o_addr > this->o_addr)
+			result = 1;
+		else if(map_entry->o_addr < this->o_addr)
+			result = -1;
+		else 
+			result = 0;
 
 		parent = *new;
 		if(result < 0)
-			new = &((*new)->rb_left);
+			new = &parent->rb_left;
 		else if (result > 0)
-			new = &((*new)->rb_right);
+			new = &parent->rb_right;
 		else{
 			//it means overwrite for the corresponding o_addr, so delete old map, invalid it, and insert new map.
 			rb_erase(&this->node, root);
 			memset(this, 0x00, sizeof(struct SHRD_MAP));
 			scsi_shrd_map_insert(root, map_entry);
-			
 			return 1;
 		}
 	}
@@ -1892,6 +1896,9 @@ u32 scsi_shrd_init(struct request_queue *q){
 		list_add_tail(&sdev->shrd->remap_cmd[idx].remap_cmd_list, &sdev->shrd->free_remap_cmd_list);
 	}
 	spin_unlock_irq(sdev->shrd->jn_log_lock);
+
+	sdev->shrd->rw_mapping = RB_ROOT;
+	sdev->shrd->jn_mapping = RB_ROOT;
 
 	scsi_shrd_bd_init(q);
 
@@ -2638,26 +2645,33 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 
 	idx = 0;
 
-	for(node = rb_first(&shrd->rw_mapping); node; rb_next(node)){
+	for(node = rb_first(&shrd->rw_mapping); node; node = rb_next(node)){
 
 		map = rb_entry(node, struct SHRD_MAP, node);
-
-		sdev_printk(KERN_INFO, 
+		
 		if(map->flags != SHRD_VALID_MAP)
 			continue;
 
 		if(end_idx > start_idx){
-			if((map->t_addr >= start_idx) && (map->t_addr <= end_idx)){
+			if((map->t_addr >= SHRD_RW_LOG_START_IN_PAGE + start_idx) && (map->t_addr <= SHRD_RW_LOG_START_IN_PAGE + end_idx)){
 				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->o_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY] = map->o_addr;
 				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->t_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY] = map->t_addr;
 				map->flags = SHRD_REMAPPING_MAP;
+				sdev_printk(KERN_INFO, sdev, "%d: %s: remap data, idx: %d, o_addr: %u, t_addr: %u\n", smp_processor_id(), __func__,
+					idx / SHRD_NUM_MAX_REMAP_ENTRY, 
+					entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->o_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY],
+					entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->t_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY]);
 			}
 		}
 		else{
-			if((map->t_addr >= start_idx) || (map->t_addr <= end_idx)){
+			if((map->t_addr >= SHRD_RW_LOG_START_IN_PAGE + start_idx) || (map->t_addr <= SHRD_RW_LOG_START_IN_PAGE + end_idx)){
 				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->o_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY] = map->o_addr;
 				entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->t_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY] = map->t_addr;
 				map->flags = SHRD_REMAPPING_MAP;
+				sdev_printk(KERN_INFO, sdev, "%d: %s: remap data, idx: %d, o_addr: %u, t_addr: %u\n", smp_processor_id(), __func__,
+					idx / SHRD_NUM_MAX_REMAP_ENTRY, 
+					entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->o_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY],
+					entry->remap_data[idx / SHRD_NUM_MAX_REMAP_ENTRY]->t_addr[idx % SHRD_NUM_MAX_REMAP_ENTRY]);
 			}
 		}
 		
@@ -2803,8 +2817,19 @@ static void scsi_request_fn(struct request_queue *q)
 				goto spcmd;
 			}
 			else if((remap_entry = scsi_shrd_prep_remap_if_need(q))){
+				int iter;
 				//need remap?
 				BUG_ON(!remap_entry);
+
+				//dump remap entry
+				/*
+				sdev_printk(KERN_INFO, sdev, "%d: %s: remap_data dump, start: %u, end: %u, count: %u\n", smp_processor_id(), __func__, 
+				remap_entry->remap_data[0]->t_addr_start, remap_entry->remap_data[0]->t_addr_end, remap_entry->remap_data[0]->remap_count);
+				for(iter = 0; iter < remap_entry->remap_data[0]->remap_count; iter++){
+					sdev_printk(KERN_INFO, sdev, "%d: %s: remap_data dump, oaddr: %u, taddr: %u\n", smp_processor_id(), __func__, 	
+						remap_entry->remap_data[0]->o_addr[iter], remap_entry->remap_data[0]->t_addr[iter]);
+				}
+				*/
 				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle try remap\n",  smp_processor_id(), __func__);
 				scsi_shrd_make_remap_bio(q, remap_entry);
 				continue;
