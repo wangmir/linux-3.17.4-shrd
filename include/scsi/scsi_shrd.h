@@ -13,7 +13,7 @@
 
 //#define SHRD_NUM_CORES 2 //Samsung RSP SSD specific design, 
 
-#define DEV_PATH "/dev/sde" //should be modified to dynamic changing.
+#define DEV_PATH "/dev/sda" //should be modified to dynamic changing.
 
 #define SHRD_NUM_CORES 2
 
@@ -40,8 +40,8 @@
 
 #define SHRD_CMD_START_IN_PAGE SHRD_TOTAL_LPN
 #define SHRD_TWRITE_CMD_START_IN_PAGE SHRD_CMD_START_IN_PAGE
-#define SHRD_REMAP_CMD_START_IN_PAGE (SHRD_CMD_START_IN_PAGE + 32 * SHRD_NUM_CORES) //# of ncq * 2 (2 cores)
-#define SHRD_COMFRIM_RD_CMD_IN_PAGE (SHRD_REMAP_CMD_START_IN_PAGE + 32 * SHRD_NUM_CORES)
+#define SHRD_REMAP_CMD_START_IN_PAGE (SHRD_CMD_START_IN_PAGE + SHRD_TWRITE_ENTRIES * SHRD_NUM_CORES) //# of ncq * 2 (2 cores)
+#define SHRD_COMFRIM_RD_CMD_IN_PAGE (SHRD_REMAP_CMD_START_IN_PAGE + SHRD_REMAP_ENTRIES * SHRD_NUM_CORES)
 
 #define SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE 64
 
@@ -54,7 +54,7 @@
 #define SHRD_MAX_REMAP_DATA_ENTRIES SHRD_REMAP_DATA_PAGE * SHRD_NUM_MAX_REMAP_ENTRY
 
 
-#define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 2)
+#define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 1)
 
 #define SHRD_INVALID_LPN 0x7fffffff
 
@@ -154,12 +154,15 @@ struct SHRD{
 	//for each index indicator for write and remap, should acquire lock to handle each entries.
 	//idx represents the index within log area, thus plz use this with SHRD_RW_LOG_START_IN_PAGE when calculate exact address.
 	u32 rw_log_start_idx;
+	u32 rw_log_complete_idx;
 	u32 rw_log_new_idx;
 	u32 rw_log_valid_count;
 	u32 rw_log_remapping_count;
 	
 	u32 jn_log_start_idx;
 	u32 jn_log_new_idx;  
+
+	u8 in_remap; //temporary test
 
 	/*
 	protect each log enries from double allocation. __xx_log_lock should never be used directly.
@@ -174,6 +177,11 @@ struct SHRD{
 	//we need to reserve rq_disk first, and then use at making twrite request
 	struct block_device *bdev;
 	struct gendisk *rq_disk;
+
+	//for debug
+	u32 twrite_hdr_cnt;
+	u32 twrite_data_cnt;
+	u32 remap_cnt;
 	
 };
 
