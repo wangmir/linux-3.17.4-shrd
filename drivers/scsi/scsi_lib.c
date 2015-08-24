@@ -2296,7 +2296,9 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		BUG_ON(!twrite_entry);
 
 		//error handling check: should we need to wait for the twrite header completion before send twrite data?
+		spin_lock_irqsave(q->queue_lock, flags);
 		scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data, twrite_entry->data_rq); 
+		spin_unlock_irqrestore(q->queue_lock, flags);
 	}
 	else if(bio->bi_rw & REQ_SHRD_TWRITE_DAT){
 		struct SHRD_TWRITE *twrite_entry;
@@ -2314,7 +2316,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			if(!prq->bio)
 				BUG();
 			
-			//sdev_printk(KERN_INFO, sdev, "%d: %s: completion start, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
+			sdev_printk(KERN_INFO, sdev, "%d: %s: completion start, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 
 			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
 			//ret = __blk_end_bidi_request(prq, 0,blk_rq_bytes(prq),0);
@@ -2610,7 +2612,7 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 			BUG();
 		}
 	}
-
+/*
 	sdev_printk(KERN_INFO, sdev, "%d: %s: dump remap data, t_addr_start: %u, t_addr_end: %u, count: %u\n", smp_processor_id(), __func__, remap_entry->remap_data[0]->t_addr_start,
 		remap_entry->remap_data[0]->t_addr_end, remap_entry->remap_data[0]->remap_count);
 
@@ -2620,7 +2622,7 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 
 	sdev_printk(KERN_INFO, sdev, "%d: %s: bio make complete, remap entry %llx, bio %llx, bi_sector %u, bi_size %u\n", smp_processor_id(), __func__,
 		(u64)remap_entry, (u64)bio, (u32)bio->bi_iter.bi_sector, (u32)bio->bi_iter.bi_size);
-
+*/
 	scsi_shrd_submit_bio(REQ_SYNC, bio, remap_entry->req);
 	
 }
