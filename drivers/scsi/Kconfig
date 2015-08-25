@@ -250,6 +250,16 @@ config SCSI_SHRD_TEST0
 	help
 	  To enable SCSI SHRD TEST
 
+config SCSI_SHRD_DEBUG_PRINTK
+	bool "Trigger SCSI SHRD debugging message using printk"
+	help
+	  To enable SCSI SHRD debugging message
+
+config SCSI_SHRD_TRACE_PRINTK
+	bool "Trigger SCSI_SHRD tracing message using printk"
+	help
+  	  To enable SCSI SHRD tracing message
+
 menu "SCSI Transports"
 	depends on SCSI
 

@@ -711,7 +711,7 @@ static bool scsi_end_request(struct request *req, int error,
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 	if(sdev->shrd_on)
-		sdev_printk(KERN_INFO, sdev, "%s: start of ending\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: start of ending\n", __func__);
 #endif
 
 
@@ -763,7 +763,7 @@ static bool scsi_end_request(struct request *req, int error,
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
 	if(sdev->shrd_on){
-		sdev_printk(KERN_INFO, sdev, "%s: finish end request\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: finish end request\n", __func__);
 	}
 #endif
 
@@ -1118,7 +1118,7 @@ static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb,
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 	if(((struct scsi_device *)req->q->queuedata)->shrd_on)
-		sdev_printk(KERN_INFO, (struct scsi_device *)req->q->queuedata, "%s: nents %d, sectors %d\n", __func__, count, blk_rq_sectors(req));
+		shrd_dbg_printk(KERN_INFO, (struct scsi_device *)req->q->queuedata, "%s: nents %d, sectors %d\n", __func__, count, blk_rq_sectors(req));
 #endif
 
 
@@ -1911,7 +1911,7 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, st
 	int rw_flags, where = ELEVATOR_INSERT_FRONT;
 	//struct request *req;
 
-	printk("%s: start blk_queue_bio\n", __func__);
+	//printk("%s: start blk_queue_bio\n", __func__);
 
 	blk_queue_bounce(q, &bio);
 
@@ -1957,12 +1957,12 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, st
 	if (test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags))
 		req->cpu = raw_smp_processor_id();
 
-	printk("%s: above blk_account_io_start\n", __func__);
+	//printk("%s: above blk_account_io_start\n", __func__);
 
 	blk_account_io_start(req, true); 
 	__elv_add_request(q, req, where);
 
-	printk("%s: end blk_queue_bio\n", __func__);
+	//printk("%s: end blk_queue_bio\n", __func__);
 
 }
 
@@ -1975,7 +1975,7 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 
 	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
 
-	printk("%s: start submit_bio\n", __func__);
+	//printk("%s: start submit_bio\n", __func__);
 
 	bio->bi_rw |= rw;
 
@@ -2067,27 +2067,27 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 
 	ret = scsi_prep_state_check(sdev, rq);
 	if(ret != BLKPREP_OK){
-		sdev_printk(KERN_INFO, sdev, "%s: nopack because of BLKPREP_OK\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of BLKPREP_OK\n", __func__);
 		goto no_pack;
 	}
 	if(!(rq->cmd_flags & REQ_WRITE)){
-		sdev_printk(KERN_INFO, sdev, "%s: nopack because of read request\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of read request\n", __func__);
 		goto no_pack;
 	}
 	if(rq->cmd_flags & REQ_DISCARD || rq->cmd_flags & REQ_FLUSH  || rq->cmd_flags & REQ_FUA){
-		sdev_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush,fua\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush,fua\n", __func__);
 		goto no_pack;
 	}
 	if(rq->cmd_flags & REQ_WRITE_SAME){
-		sdev_printk(KERN_INFO, sdev, "%s: nopack because of REQ_WRITE_SAME\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of REQ_WRITE_SAME\n", __func__);
 		goto no_pack;
 	}
 	if(blk_rq_sectors(rq) > SHRD_RW_THRESHOLD_IN_SECTOR){
-		sdev_printk(KERN_INFO, sdev, "%s: nopack because of sequential write\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of sequential write\n", __func__);
 		goto no_pack;
 	}
 	if(blk_rq_sectors(rq) < SHRD_SECTORS_PER_PAGE){ //under 4KB write is not the common write situation.
-		sdev_printk(KERN_INFO, sdev, "%s: nopack because of tiny requests\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of tiny requests\n", __func__);
 		goto no_pack;
 	}
 
@@ -2113,7 +2113,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 				shrd->rw_log_new_idx = 0; //goto log end because enoulgh slot is presented.
 			}
 			else{
-				sdev_printk(KERN_INFO, sdev, "%s: nopack because log is full1\n", __func__);
+				shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because log is full1\n", __func__);
 				goto no_pack; //log is full, don't packed.
 			}
 		}
@@ -2125,7 +2125,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 				max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
 		}
 		else{
-			sdev_printk(KERN_INFO, sdev, "%s: nopack because log is full2\n", __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because log is full2\n", __func__);
 			goto no_pack;
 		}
 	}
@@ -2137,7 +2137,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		//not aligned, need to pad
 		if(req_sectors + SHRD_SECTORS_PER_PAGE > max_packed_rw){
 			req_sectors -= blk_rq_sectors(cur);
-			sdev_printk(KERN_INFO, sdev, "%s: nopack because of padding\n", __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of padding\n", __func__);
 			goto no_pack;
 		}
 		else{
@@ -2152,7 +2152,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	//we need to get a empty twrite cmd entry
 	twrite_entry = shrd_get_twrite_entry(shrd);
 	if(twrite_entry == NULL){
-		sdev_printk(KERN_INFO, sdev, "%s: nopack because of NULL twrite\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of NULL twrite\n", __func__);
 		goto no_pack;
 	}
 	list_del(&twrite_entry->twrite_cmd_list);
@@ -2170,33 +2170,33 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		next = blk_fetch_request(q); //we need to start the request in order to get next request
 		
 		if(!next){
-			sdev_printk(KERN_INFO, sdev, "%s: nopack because of noreq\n", __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of noreq\n", __func__);
 			put_back = false;
 			break;
 		}
 
 		if(next->bio->bi_bdev != shrd->bdev){
-			sdev_printk(KERN_ERR, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
+			shrd_dbg_printk(KERN_ERR, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
 			BUG();
 		}
 
 		if(next->cmd_flags & REQ_DISCARD || next->cmd_flags & REQ_FLUSH || next->cmd_flags & REQ_FUA){
-			sdev_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush, fua\n", __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush, fua\n", __func__);
 			break;
 		}
 
 		if(rq_data_dir(cur) != rq_data_dir(next)){
-			sdev_printk(KERN_INFO, sdev, "%s: nopack because of read request\n", __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of read request\n", __func__);
 			break;
 		}
 
 		if(blk_rq_sectors(next) > SHRD_RW_THRESHOLD_IN_SECTOR){
-			sdev_printk(KERN_INFO, sdev, "%s: nopack because of large next\n", __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of large next\n", __func__);
 			break;
 		}
 		
 		if(blk_rq_sectors(next) < SHRD_SECTORS_PER_PAGE){ //under 4KB write is not the common write situation.
-			sdev_printk(KERN_INFO, sdev, "%s: nopack because of tiny next requests\n", __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of tiny next requests\n", __func__);
 			break;
 		}
 
@@ -2205,7 +2205,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		if(req_sectors > max_packed_rw){
 			req_sectors -= blk_rq_sectors(next);
 			phys_segments -= next->nr_phys_segments;
-			sdev_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
 			break;
 		}
 
@@ -2214,7 +2214,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			//not aligned, need to pad
 			if(req_sectors + SHRD_SECTORS_PER_PAGE > max_packed_rw){
 				req_sectors -= blk_rq_sectors(next);
-				sdev_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
+				shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
 				break;
 			}
 			else{
@@ -2242,7 +2242,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		twrite_entry->phys_segments = phys_segments;
 	}
 	else{
-		sdev_printk(KERN_INFO, sdev, "%s: nopack because there are no requests to pack\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because there are no requests to pack\n", __func__);
 		shrd_put_twrite_entry(sdev->shrd, twrite_entry);
 		blk_requeue_request(q, rq);
 		twrite_entry = NULL;
@@ -2250,7 +2250,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	}
 
 	if(twrite_entry != NULL){
-		sdev_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d, num blocks %d, num segments %d, num padding %d \n",
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d, num blocks %d, num segments %d, num padding %d \n",
 			__func__, twrite_entry->nr_requests, twrite_entry->blocks, twrite_entry->phys_segments, padding);
 		return twrite_entry;
 	}
@@ -2286,13 +2286,13 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 	if(err)
 		BUG();
 
-	sdev_printk(KERN_INFO, sdev, "%d: %s: bio request is %s, bi_sector %u, bi_size %d, bio->bi_rw %X", smp_processor_id(), __func__, 
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: bio request is %s, bi_sector %u, bi_size %d, bio->bi_rw %X", smp_processor_id(), __func__, 
 		(bio->bi_rw & REQ_SHRD_TWRITE_HDR) ? "twrite hdr": (bio->bi_rw & REQ_SHRD_TWRITE_DAT) ? "twrite data" : (bio->bi_rw & REQ_SHRD_REMAP) ? "remap" : "err",
 		(u32)bio->bi_iter.bi_sector, bio->bi_iter.bi_size, (u32)bio->bi_rw);
 	
 	if(bio->bi_rw & REQ_SHRD_TWRITE_HDR){
 		struct SHRD_TWRITE *twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
-		sdev_printk(KERN_INFO, sdev, "%d: %s: twrite hdr completion: twrite: %llx, block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__, (u64)twrite_entry, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: twrite hdr completion: twrite: %llx, block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__, (u64)twrite_entry, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 		BUG_ON(!twrite_entry);
 
 		//error handling check: should we need to wait for the twrite header completion before send twrite data?
@@ -2307,7 +2307,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		BUG_ON(!twrite_entry);
 
-		sdev_printk(KERN_INFO, sdev, "%d: %s: twrite data completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: twrite data completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 
 		//spin_lock_irqsave(shrd->bdev->bd_queue->queue_lock, flags);
 		list_for_each_entry_safe(prq, tmp, &twrite_entry->req_list, queuelist){
@@ -2316,7 +2316,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			if(!prq->bio)
 				BUG();
 			
-			sdev_printk(KERN_INFO, sdev, "%d: %s: completion start, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: completion start, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 
 			ret = blk_update_request(prq, 0, blk_rq_bytes(prq));
 			//ret = __blk_end_bidi_request(prq, 0,blk_rq_bytes(prq),0);
@@ -2327,10 +2327,12 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			spin_lock_irqsave(prq->q->queue_lock, flags);
 			blk_finish_request(prq, 0);
 			spin_unlock_irqrestore(prq->q->queue_lock, flags);
-			//sdev_printk(KERN_INFO, sdev, "%d: %s: completion end, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
+			//shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: completion end, prq pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(prq), blk_rq_sectors(prq));
 		}
 		//spin_unlock_irqrestore(shrd->bdev->bd_queue->queue_lock, flags);
+		spin_lock_irqsave(q->queue_lock,flags);
 		shrd_put_twrite_entry(shrd, twrite_entry);
+		spin_unlock_irqrestore(q->queue_lock, flags);
 	}
 	
 	else if(bio->bi_rw & REQ_SHRD_REMAP){
@@ -2341,9 +2343,9 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		BUG_ON(!remap_entry);
 		remap_data = remap_entry->remap_data[0];
 
-		sdev_printk(KERN_INFO, sdev, "%d: %s: remap completion: entry_num: %u, start: %u, new: %u\n", smp_processor_id(), __func__, remap_entry->entry_num,
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remap completion: entry_num: %u, start: %u, new: %u\n", smp_processor_id(), __func__, remap_entry->entry_num,
 			shrd->rw_log_start_idx, shrd->rw_log_new_idx);
-		sdev_printk(KERN_INFO, sdev, "%d: %s: remap data dump: start %u, end %u, count %u\n", smp_processor_id(), __func__,
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remap data dump: start %u, end %u, count %u\n", smp_processor_id(), __func__,
 			remap_data->t_addr_start, remap_data->t_addr_end, remap_data->remap_count);
 
 		spin_lock_irqsave(q->queue_lock, flags);
@@ -2356,7 +2358,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		if(shrd->rw_log_start_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 			shrd->rw_log_start_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
 		
-		sdev_printk(KERN_INFO, sdev, "%d: %s: remap complete, start %u, new %u, taddr_end %u, SHRD_RW_LOG_START_IN_PAGE %u\n", smp_processor_id(), __func__, 
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remap complete, start %u, new %u, taddr_end %u, SHRD_RW_LOG_START_IN_PAGE %u\n", smp_processor_id(), __func__, 
 			shrd->rw_log_start_idx, shrd->rw_log_new_idx, remap_data->t_addr_end, SHRD_RW_LOG_START_IN_PAGE);
 
 		shrd_put_remap_entry(shrd, remap_entry);
@@ -2467,11 +2469,11 @@ static struct bio *scsi_shrd_make_twrite_header_bio(struct request_queue *q, str
 		}
 	}
 
-	sdev_printk(KERN_INFO, sdev, "%d: %s: dump twrite header, addr_start: %u, count: %u\n", smp_processor_id(), __func__, 
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: dump twrite header, addr_start: %u, count: %u\n", smp_processor_id(), __func__, 
 		twrite_entry->twrite_hdr->t_addr_start, twrite_entry->twrite_hdr->io_count);
 
 	for(i=0; i < twrite_entry->twrite_hdr->io_count; i++){
-		sdev_printk(KERN_INFO, sdev, "%d: %s: oaddr: %u\n", smp_processor_id(), __func__, twrite_entry->twrite_hdr->o_addr[i]);
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: oaddr: %u\n", smp_processor_id(), __func__, twrite_entry->twrite_hdr->o_addr[i]);
 	}
 
 	return bio;
@@ -2490,7 +2492,7 @@ static void scsi_shrd_make_twrite_bios(struct request_queue *q, struct SHRD_TWRI
 	struct scsi_device *sdev = q->queuedata;
 	struct bio *header, *data;
 
-	sdev_printk(KERN_INFO, sdev, "%s start\n", __func__);
+	shrd_dbg_printk(KERN_INFO, sdev, "%s start\n", __func__);
 
 	header = scsi_shrd_make_twrite_header_bio(q, twrite_entry);
 	if(!header){
@@ -2509,7 +2511,7 @@ static void scsi_shrd_make_twrite_bios(struct request_queue *q, struct SHRD_TWRI
 
 	twrite_entry->data = data;
 
-	sdev_printk(KERN_INFO, sdev, "%s: bio make complete, twrite_entry %llx, header bio %llx, bi_sector %u, bi_size %d, data bio %llx, bi_sector %u, bi_size %u\n", __func__
+	shrd_dbg_printk(KERN_INFO, sdev, "%s: bio make complete, twrite_entry %llx, header bio %llx, bi_sector %u, bi_size %d, data bio %llx, bi_sector %u, bi_size %u\n", __func__
 		, (u64)twrite_entry, (u64)header, (u32)header->bi_iter.bi_sector, (u32)header->bi_iter.bi_size, (u64)data, (u32)data->bi_iter.bi_sector, (u32)data->bi_iter.bi_size);
 }
 
@@ -2523,6 +2525,7 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 	struct SHRD *shrd = sdev->shrd;
 	struct SHRD_TWRITE_HEADER *header = twrite_entry->twrite_hdr;
 	u32 idx = 0, sectors = twrite_entry->blocks, end;
+	u32 dbg_idx, dbg_end;
 
 	memset(header, 0x00, sizeof(struct SHRD_TWRITE_HEADER));
 
@@ -2536,7 +2539,10 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 
 	end = shrd->rw_log_new_idx + (sectors >> 3);
 
-	sdev_printk(KERN_INFO, sdev, "%s: packing start, twrite, block: %d, reqs:%d, seg:%d, idx: %d, end: %d \n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments, idx, end);
+	dbg_idx = idx;
+	dbg_end = end;
+
+	shrd_dbg_printk(KERN_INFO, sdev, "%s: packing start, twrite, block: %d, reqs:%d, seg:%d, idx: %d, end: %d \n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments, idx, end);
 
 	if(end >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		end -= SHRD_RW_LOG_SIZE_IN_PAGE;
@@ -2545,7 +2551,18 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 
 		int i;
 		if(idx > end){
-			sdev_printk(KERN_INFO, sdev, "%s: SHRD error on packing rw twrite, idx is larger than end, idx: %d, end: %d\n", __func__, idx, end);
+			i = 0;
+			sdev_printk(KERN_ERR, sdev, "%s: SHRD error on packing rw twrite, idx is larger than end, idx: %u, end: %u, log_new_idx: %u, sectors >> 3 : %u\n"
+				, __func__, idx, end, shrd->rw_log_new_idx, (sectors >> 3));
+			sdev_printk(KERN_ERR, sdev, "%s: dbg_idx:%u, dbg_end: %u\n", __func__, dbg_idx, dbg_end);
+			sdev_printk(KERN_ERR, sdev, "%s: twrite_entry nr_requests: %u, blocks: %u\n", __func__, twrite_entry->nr_requests, twrite_entry->blocks);
+			sdev_printk(KERN_ERR, sdev, "%s: request_list dump\n", __func__);
+			prq = NULL;
+			list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
+				sdev_printk(KERN_ERR, sdev,"%s: %uth request, lpn: %u, sector size: %u\n", __func__, i, blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE, blk_rq_sectors(prq));
+				i++;
+			}
+			
 			BUG();
 		}
 		
@@ -2575,7 +2592,7 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 				idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
 		}
 	}
-	sdev_printk(KERN_INFO, sdev, "%s: packing end, log idx (%d) is changed to %d\n", __func__, shrd->rw_log_new_idx, idx);
+	shrd_dbg_printk(KERN_INFO, sdev, "%s: packing end, log idx (%d) is changed to %d\n", __func__, shrd->rw_log_new_idx, idx);
 	shrd->rw_log_new_idx = idx;
 
 }
@@ -2613,14 +2630,14 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 		}
 	}
 /*
-	sdev_printk(KERN_INFO, sdev, "%d: %s: dump remap data, t_addr_start: %u, t_addr_end: %u, count: %u\n", smp_processor_id(), __func__, remap_entry->remap_data[0]->t_addr_start,
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: dump remap data, t_addr_start: %u, t_addr_end: %u, count: %u\n", smp_processor_id(), __func__, remap_entry->remap_data[0]->t_addr_start,
 		remap_entry->remap_data[0]->t_addr_end, remap_entry->remap_data[0]->remap_count);
 
 	for(i=0; i < remap_entry->remap_data[0]->remap_count; i++){
-		sdev_printk(KERN_INFO, sdev, "%d: %s: oaddr: %u, taddr: %u\n", smp_processor_id(), __func__, remap_entry->remap_data[0]->o_addr[i], remap_entry->remap_data[0]->t_addr[i]);
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: oaddr: %u, taddr: %u\n", smp_processor_id(), __func__, remap_entry->remap_data[0]->o_addr[i], remap_entry->remap_data[0]->t_addr[i]);
 	}
 
-	sdev_printk(KERN_INFO, sdev, "%d: %s: bio make complete, remap entry %llx, bio %llx, bi_sector %u, bi_size %u\n", smp_processor_id(), __func__,
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: bio make complete, remap entry %llx, bio %llx, bi_sector %u, bi_size %u\n", smp_processor_id(), __func__,
 		(u64)remap_entry, (u64)bio, (u32)bio->bi_iter.bi_sector, (u32)bio->bi_iter.bi_size);
 */
 	scsi_shrd_submit_bio(REQ_SYNC, bio, remap_entry->req);
@@ -2637,7 +2654,7 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 	u32 start_idx = shrd->rw_log_start_idx, end_idx;
 	u32 idx = 0, cnt = 0;
 
-	sdev_printk(KERN_INFO, sdev, "%d: %s: do_remap\n",smp_processor_id(),  __func__);
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: do_remap\n",smp_processor_id(),  __func__);
 	
 	entry = shrd_get_remap_entry(shrd);
 	if(entry == NULL){
@@ -2701,7 +2718,7 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 			break;
 	}
 /*
-	sdev_printk(KERN_INFO, sdev, "%d: %s: dump remap entry, start: %u, end: %u, count: %u\n", smp_processor_id(), __func__, entry->remap_data[0]->t_addr_start,
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: dump remap entry, start: %u, end: %u, count: %u\n", smp_processor_id(), __func__, entry->remap_data[0]->t_addr_start,
 		entry->remap_data[0]->t_addr_end, entry->remap_data[0]->remap_count);
 		*/
 	return entry;
@@ -2732,7 +2749,7 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 			//to protect reversing of circular q at single remap command.
 		}
 
-		sdev_printk(KERN_INFO, sdev, "%d: %s: remap is needed, size is %u\n", smp_processor_id(), __func__, size);
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remap is needed, size is %u\n", smp_processor_id(), __func__, size);
 		remap_entry = __scsi_shrd_do_remap_rw_log(q, size);
 		BUG_ON(!remap_entry);
 	}
@@ -2797,7 +2814,7 @@ static void scsi_request_fn(struct request_queue *q)
 	shost = sdev->host;
 	
 	if(sdev->shrd_on)
-		sdev_printk(KERN_INFO, sdev, "%d: %s: active request fn is %d\n", smp_processor_id(), __func__, q->request_fn_active);
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: active request fn is %d\n", smp_processor_id(), __func__, q->request_fn_active);
 	
 	for (;;) {
 		int rtn;
@@ -2809,7 +2826,7 @@ static void scsi_request_fn(struct request_queue *q)
 		 
 		 //test
 		if(sdev->shrd_on && sdev->shrd->in_remap){
-			sdev_printk(KERN_INFO, sdev, "%d: %s: break because shrd is in remap\n", smp_processor_id(), __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: break because shrd is in remap\n", smp_processor_id(), __func__);
 			break;
 		}
 
@@ -2818,10 +2835,8 @@ static void scsi_request_fn(struct request_queue *q)
 		if (!req){
 			
 			if(sdev->shrd_on)
-				sdev_printk(KERN_INFO, sdev, "%d: %s: break because req NULL on peek\n", smp_processor_id(), __func__);
-
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: break because req NULL on peek\n", smp_processor_id(), __func__);
 			break;
-
 		}
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
@@ -2833,40 +2848,40 @@ static void scsi_request_fn(struct request_queue *q)
 
 			BUG_ON(!sdev->shrd);
 
-			sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
 			
 			if(req->bio){
 				if(sdev->shrd->bdev != req->bio->bi_bdev)
-					sdev_printk(KERN_ERR, sdev, "%d: %s: shrd->bdev is different from req->bio->bi_bdev\n", smp_processor_id(), __func__);
+					shrd_dbg_printk(KERN_ERR, sdev, "%d: %s: shrd->bdev is different from req->bio->bi_bdev\n", smp_processor_id(), __func__);
 			}
 		
 			if(bio && bio->bi_rw & REQ_SHRD_TWRITE_HDR){ //handle former speical function for SHRD
-				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle twrite hdr request\n",smp_processor_id(), __func__);
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle twrite hdr request\n",smp_processor_id(), __func__);
 				goto spcmd;
 			}
 			else if(bio && bio->bi_rw & REQ_SHRD_TWRITE_DAT){
-				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle twrite data request\n", smp_processor_id(), __func__);
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle twrite data request\n", smp_processor_id(), __func__);
 				goto spcmd;
 			}
 			else if(bio && bio->bi_rw & REQ_SHRD_REMAP){
-				sdev->shrd->in_remap = 1;
-				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle remap request\n", smp_processor_id(), __func__);
+				
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle remap request\n", smp_processor_id(), __func__);
 				goto spcmd;
 			}
 			else if(sdev->shrd->in_remap){
-				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD in remap status, just handle normal I/O only\n", smp_processor_id(), __func__);
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD in remap status, just handle normal I/O only\n", smp_processor_id(), __func__);
 				goto spcmd;
 			}
 			else if((remap_entry = scsi_shrd_prep_remap_if_need(q))){
 				//need remap?
 				BUG_ON(!remap_entry);
-				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle try remap\n",  smp_processor_id(), __func__);
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle try remap\n",  smp_processor_id(), __func__);
 				scsi_shrd_make_remap_bio(q, remap_entry);
 				continue;
 			}
 			else if((twrite_entry = scsi_shrd_prep_rw_twrite(q,req))){
 				BUG_ON(!twrite_entry);
-				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle try twrite\n", smp_processor_id(), __func__);
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle try twrite\n", smp_processor_id(), __func__);
 				//need twrite?
 				scsi_shrd_packing_rw_twrite(q, twrite_entry);
 				scsi_shrd_make_twrite_bios(q, twrite_entry);
@@ -2881,12 +2896,12 @@ static void scsi_request_fn(struct request_queue *q)
 				continue;
 			}
 			else if(!rq_data_dir(req)){
-				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic read function\n", smp_processor_id(), __func__);
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic read function\n", smp_processor_id(), __func__);
 				goto spcmd;
 				//read request, need to check whether need to change the address or not.
 			}
 			else {	//generic prep procedure (for non_twrite request)
-				sdev_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic write function\n", smp_processor_id(), __func__);
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic write function\n", smp_processor_id(), __func__);
 				goto spcmd;
 				
 			}
@@ -2902,11 +2917,9 @@ spcmd:
 			continue;
 		}
 
-		if (!scsi_dev_queue_ready(q, sdev)){
-			
+		if (!scsi_dev_queue_ready(q, sdev)){		
 			if(sdev->shrd_on)
-				sdev_printk(KERN_INFO, sdev, "%s: break because dev queue is not ready\n", __func__);
-			
+				shrd_dbg_printk(KERN_INFO, sdev, "%s: break because dev queue is not ready\n", __func__);		
 			break;
 		}
 		/*
@@ -2919,21 +2932,61 @@ spcmd:
 			if(req->bio){
 				if(req->bio->bi_rw & REQ_SHRD_TWRITE_HDR){
 					sdev->shrd->twrite_hdr_cnt++;
-					sdev_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
+					shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
 						sdev->shrd->twrite_data_cnt, sdev->shrd->remap_cnt);
 				}
 				else if(req->bio->bi_rw & REQ_SHRD_TWRITE_DAT){
 					sdev->shrd->twrite_data_cnt += blk_rq_sectors(req) >> 3;
-					sdev_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
+					shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
 						sdev->shrd->twrite_data_cnt, sdev->shrd->remap_cnt);
 				}
 				else if(req->bio->bi_rw & REQ_SHRD_REMAP){
 					sdev->shrd->remap_cnt++;
-					sdev_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
+					//for in_remap flags
+					sdev->shrd->in_remap = 1;
+					shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
 						sdev->shrd->twrite_data_cnt, sdev->shrd->remap_cnt);
 				}
 			}
 		}
+
+#ifdef CONFIG_SCSI_SHRD_TRACE_PRINTK
+		//tracing region for the simulator
+		if(sdev->shrd_on){
+			struct SHRD_TWRITE *twrite_entry = NULL;
+			struct SHRD_REMAP *remap_entry = NULL;
+			u32 i = 0;
+			if(req->bio){
+
+				//normal request information at the front 
+				//start address, sector count
+				shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	%s	%u	%u\n", ((req->cmd_flags & REQ_WRITE) ? "W" : "R"), blk_rq_pos(req), blk_rq_sectors(req));
+
+				//specific information for the twrite hdr and remap data at the next
+				if(req->bio->bi_rw & REQ_SHRD_TWRITE_HDR){
+					twrite_entry = (struct SHRD_TWRITE *)req->bio->bi_private;
+					shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	TWRITE_HDR	%u	%u	", twrite_entry->twrite_hdr->t_addr_start, twrite_entry->twrite_hdr->io_count);
+
+					for(i=0; i < SHRD_NUM_MAX_TWRITE_ENTRY; i++){
+						shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE TWRITE_HDR	O_ADDR	%u	", twrite_entry->twrite_hdr->o_addr[i]);
+					}
+				}
+				else if(req->bio->bi_rw & REQ_SHRD_REMAP){
+					remap_entry = (struct SHRD_REMAP *)req->bio->bi_private;	
+					shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	REMAP_DATA	%u	%u	%u	", 
+						remap_entry->remap_data[0]->t_addr_start, remap_entry->remap_data[0]->t_addr_end, remap_entry->remap_data[0]->remap_count);
+
+					for(i=0; i < SHRD_NUM_MAX_REMAP_ENTRY; i++){
+						shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	REMAP_DATA	T_ADDR %u	O_ADDR	%u	", remap_entry->remap_data[0]->t_addr[i], remap_entry->remap_data[0]->t_addr[i]);
+					}
+				}
+				else{
+					shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	NORMAL_REQUEST\n");
+				}
+			}
+			
+		}	
+#endif
 		
 		spin_unlock_irq(q->queue_lock);
 		cmd = req->special;
@@ -2989,7 +3042,7 @@ spcmd:
 		}
 		
 		if(sdev->shrd_on){
-			sdev_printk(KERN_INFO, sdev, "%d: %s: dispatch complete,req pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: dispatch complete,req pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
 		}
 		spin_lock_irq(q->queue_lock);
 	}
@@ -2999,7 +3052,7 @@ spcmd:
  host_not_ready:
  	
  	if(sdev->shrd_on)
-		sdev_printk(KERN_INFO, sdev, "%s: host not ready\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: host not ready\n", __func__);
 		
 	if (scsi_target(sdev)->can_queue > 0)
 		atomic_dec(&scsi_target(sdev)->target_busy);
@@ -3014,14 +3067,14 @@ spcmd:
 	 */
 
 	if(sdev->shrd_on)
-		sdev_printk(KERN_INFO, sdev, "%s: not ready\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: not ready\n", __func__);
 	
 	spin_lock_irq(q->queue_lock);
 	blk_requeue_request(q, req);
 	atomic_dec(&sdev->device_busy);
 out_delay:
 	if(sdev->shrd_on)
-		sdev_printk(KERN_INFO, sdev, "%s: out delay\n", __func__);
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: out delay\n", __func__);
 	
 	if (!atomic_read(&sdev->device_busy) && !scsi_device_blocked(sdev))
 		blk_delay_queue(q, SCSI_QUEUE_DELAY);

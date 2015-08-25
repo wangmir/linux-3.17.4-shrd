@@ -62,6 +62,23 @@
 #define REQ_SHRD_TWRITE_DAT REQ_NOMERGE
 #define REQ_SHRD_REMAP REQ_STARTED
 
+#ifdef CONFIG_SCSI_SHRD_DEBUG_PRINTK
+#define shrd_dbg_printk(prefix, sdev, fmt, a...)	\
+	sdev_printk(prefix, sdev, fmt, ##a)
+#else
+#define shrd_dbg_printk(prefix, sdev, fmt, a...)	\
+	do{}while(0)
+#endif
+
+
+#ifdef CONFIG_SCSI_SHRD_TRACE_PRINTK
+#define shrd_trace_printk(prefix, sdev, fmt, a...)	\
+	sdev_printk(prefix, sdev, fmt, ##a)
+#else
+#define shrd_trace_printk(prefix, sdev, fmt, a...)	\
+	do{}while(0)
+#endif		
+
 enum SHRD_MAP_FLAG {
 	SHRD_INVALID_MAP = 0,
 	SHRD_VALID_MAP,
@@ -187,7 +204,6 @@ struct SHRD{
 
 static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 
-	printk("%d: %s: entry %llx, entry num %d\n", smp_processor_id(), __func__, (u64)entry,entry->entry_num);
 	INIT_LIST_HEAD(&entry->req_list);
 	INIT_LIST_HEAD(&entry->twrite_cmd_list);
 	entry->blocks = 0;
