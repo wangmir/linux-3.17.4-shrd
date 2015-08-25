@@ -2544,11 +2544,12 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 
 	shrd_dbg_printk(KERN_INFO, sdev, "%s: packing start, twrite, block: %d, reqs:%d, seg:%d, idx: %d, end: %d \n", __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments, idx, end);
 
-	if(end >= SHRD_RW_LOG_SIZE_IN_PAGE)
-		end -= SHRD_RW_LOG_SIZE_IN_PAGE;
+	if(end > SHRD_RW_LOG_SIZE_IN_PAGE){
+		//it should not be happen because it should be split at the prep section
+		BUG();
+	}
 	
 	list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
-
 		int i;
 		if(idx > end){
 			i = 0;
@@ -2562,7 +2563,6 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 				sdev_printk(KERN_ERR, sdev,"%s: %uth request, lpn: %u, sector size: %u\n", __func__, i, blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE, blk_rq_sectors(prq));
 				i++;
 			}
-			
 			BUG();
 		}
 		
