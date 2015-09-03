@@ -2177,7 +2177,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 
 		if(next->bio->bi_bdev != shrd->bdev){
 			shrd_dbg_printk(KERN_ERR, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
-			BUG();
+			break;
+			//BUG();
 		}
 
 		if(next->cmd_flags & REQ_DISCARD || next->cmd_flags & REQ_FLUSH || next->cmd_flags & REQ_FUA){
@@ -2851,8 +2852,15 @@ static void scsi_request_fn(struct request_queue *q)
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
 			
 			if(req->bio){
-				if(sdev->shrd->bdev != req->bio->bi_bdev)
-					shrd_dbg_printk(KERN_ERR, sdev, "%d: %s: shrd->bdev is different from req->bio->bi_bdev\n", smp_processor_id(), __func__);
+				if(sdev->shrd->bdev != req->bio->bi_bdev){
+					struct request_queue *sdev_q, *bi_bdev_q;
+					
+					sdev_q = bdev_get_queue(sdev->shrd->bdev);
+					bi_bdev_q = bdev_get_queue(req->bio->bi_bdev);
+					shrd_dbg_printk(KERN_ERR, sdev, "%d: %s: shrd->bdev is different from req->bio->bi_bdev, sdev_q is %llu, bdev_q is %llu\n", smp_processor_id(), __func__, 
+						(u64)sdev_q, (u64)bi_bdev_q);
+				}
+
 			}
 		
 			if(bio && bio->bi_rw & REQ_SHRD_TWRITE_HDR){ //handle former speical function for SHRD
@@ -2897,6 +2905,8 @@ static void scsi_request_fn(struct request_queue *q)
 			}
 			else if(!rq_data_dir(req)){
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic read function\n", smp_processor_id(), __func__);
+				
+				
 				goto spcmd;
 				//read request, need to check whether need to change the address or not.
 			}
@@ -2977,7 +2987,7 @@ spcmd:
 						remap_entry->remap_data[0]->t_addr_start, remap_entry->remap_data[0]->t_addr_end, remap_entry->remap_data[0]->remap_count);
 
 					for(i=0; i < SHRD_NUM_MAX_REMAP_ENTRY; i++){
-						shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	REMAP_DATA	T_ADDR %u	O_ADDR	%u	", remap_entry->remap_data[0]->t_addr[i], remap_entry->remap_data[0]->t_addr[i]);
+						shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	REMAP_DATA	T_ADDR %u	O_ADDR	%u	", remap_entry->remap_data[0]->t_addr[i], remap_entry->remap_data[0]->o_addr[i]);
 					}
 				}
 				else{

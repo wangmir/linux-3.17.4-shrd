@@ -150,6 +150,22 @@ struct SHRD_REMAP{
 	u8 entry_num;
 };
 
+/*
+	when the read operation is larger than 4KB and contains the data in the twrite log region
+*/
+struct SHRD_SUBREAD{
+	struct list_head subread_list;
+	struct bio *bio;
+	u32 orig_sector; //o_addr in sector, this will only set when this subread is for the twrite log region, and this subread always should be 4KB
+};
+
+struct SHRD_TREAD{
+	struct list_head tread_cmd_list;
+	struct request *orig_req;
+	struct list_head subread_list;
+	u8 subread_cnt;
+};
+
 struct SHRD{	
 	
 	//SHRD map table RB tree root
