@@ -157,6 +157,7 @@ struct SHRD_SUBREAD{
 	struct list_head subread_list;
 	struct bio *bio;
 	u32 orig_sector; //o_addr in sector, this will only set when this subread is for the twrite log region, and this subread always should be 4KB
+	U32 sect_cnt;
 };
 
 struct SHRD_TREAD{

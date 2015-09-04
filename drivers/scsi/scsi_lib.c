@@ -2759,7 +2759,9 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 	
 }
 
-static int scsi_shrd_check_read_requests(struct request_queue *q, struct request *rq){
+static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q, struct request *rq){
+
+	SHRD_TREAD *tread_entry = NULL;
 /*
 	u32 rq_sectors = blk_rq_sectors(rq);
 	u32 rq_pages = rq_sectors / SHRD_SECTORS_PER_PAGE + ((rq_sectors % SHRD_SECTORS_PER_PAGE == 0) ? 0 : 1);
@@ -2782,7 +2784,8 @@ static int scsi_shrd_check_read_requests(struct request_queue *q, struct request
 		//it can be overhead so we might need to use bloom filter
 	}
 	*/
-	
+
+	return tread_entry;
 }
 
 #endif
@@ -2904,9 +2907,14 @@ static void scsi_request_fn(struct request_queue *q)
 				continue;
 			}
 			else if(!rq_data_dir(req)){
+				struct SHRD_TREAD *tread_entry = NULL;
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic read function\n", smp_processor_id(), __func__);
-				
-				
+				tread_entry = scsi_shrd_check_read_requests(q, req);
+
+				if(tread_entry){
+					//need to handle tread
+						
+				}
 				goto spcmd;
 				//read request, need to check whether need to change the address or not.
 			}
