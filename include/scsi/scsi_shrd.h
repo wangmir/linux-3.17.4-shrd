@@ -23,11 +23,13 @@
 
 #define SHRD_TWRITE_ENTRIES 32
 #define SHRD_REMAP_ENTRIES 32  // (experimental)
+#define SHRD_TREAD_ENTRIES 32
+#define SHRD_SUBREAD_ENTRIES (SHRD_TREAD_ENTRIES * 128)
 
-#define SHRD_RW_LOG_SIZE_IN_MB 32
+#define SHRD_RW_LOG_SIZE_IN_MB (32)
 #define SHRD_RW_LOG_SIZE_IN_PAGE (SHRD_RW_LOG_SIZE_IN_MB * 256)
 
-#define SHRD_JN_LOG_SIZE_IN_MB 128
+#define SHRD_JN_LOG_SIZE_IN_MB (128)
 #define SHRD_JN_LOG_SIZE_IN_PAGE (SHRD_JN_LOG_SIZE_IN_MB * 256)
 
 //110 * 1024 * 256 - SHRD_JN_LOG_SIZE_IN_PAGE - SHRD_RW_LOG_SIZE_IN_PAGE
@@ -35,7 +37,7 @@
 //#define SHRD_TOTAL_LPN (50 * 1024 * 256) 
 
 #define SHRD_LOG_START_IN_PAGE (SHRD_TOTAL_LPN - SHRD_RW_LOG_SIZE_IN_PAGE - SHRD_JN_LOG_SIZE_IN_PAGE)
-#define SHRD_RW_LOG_START_IN_PAGE SHRD_JN_LOG_START_IN_PAGE + SHRD_JN_LOG_SIZE_IN_PAGE
+#define SHRD_RW_LOG_START_IN_PAGE (SHRD_JN_LOG_START_IN_PAGE + SHRD_JN_LOG_SIZE_IN_PAGE)
 #define SHRD_JN_LOG_START_IN_PAGE SHRD_LOG_START_IN_PAGE
 
 #define SHRD_CMD_START_IN_PAGE SHRD_TOTAL_LPN
@@ -49,9 +51,10 @@
 
 #define SHRD_NUM_MAX_TWRITE_ENTRY 128
 #define SHRD_NUM_MAX_REMAP_ENTRY 510
+#define SHRD_NUM_MAX_SUBREAD_ENTRY 128
 
 #define SHRD_REMAP_DATA_PAGE 1 // 1page (experimental)
-#define SHRD_MAX_REMAP_DATA_ENTRIES SHRD_REMAP_DATA_PAGE * SHRD_NUM_MAX_REMAP_ENTRY
+#define SHRD_MAX_REMAP_DATA_ENTRIES (SHRD_REMAP_DATA_PAGE * SHRD_NUM_MAX_REMAP_ENTRY)
 
 
 #define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 1)
@@ -95,6 +98,7 @@ enum SHRD_REQ_FLAG {
 
 struct SHRD_MAP {
 	struct rb_node node;
+	struct list_head list; //for linear list map in order to handle read range search
 	u32 o_addr;
 	u32 t_addr; //taddr is actually same as the array offset of each map e.g. shrd_rw_map[i] == shrd_rw_map[i].t_addr;
 	u8 flags;
@@ -154,10 +158,11 @@ struct SHRD_REMAP{
 	when the read operation is larger than 4KB and contains the data in the twrite log region
 */
 struct SHRD_SUBREAD{
-	struct list_head subread_list;
+	struct list_head subread_cmd_list;
 	struct bio *bio;
+	struct req *req;
 	u32 orig_sector; //o_addr in sector, this will only set when this subread is for the twrite log region, and this subread always should be 4KB
-	U32 sect_cnt;
+	u32 sect_cnt;
 };
 
 struct SHRD_TREAD{
@@ -167,11 +172,16 @@ struct SHRD_TREAD{
 	u8 subread_cnt;
 };
 
+struct SHRD_MAP_HEAD{
+	struct rb_root rbtree_root;
+	struct list_head list_root;
+};
+
 struct SHRD{	
 	
-	//SHRD map table RB tree root
-	struct rb_root rw_mapping;
-	struct rb_root jn_mapping;
+	//SHRD map table RB tree & list 
+	struct SHRD_MAP_HEAD rw_mapping;
+	struct SHRD_MAP_HEAD jn_mapping;
 	
 	//SHRD map table (no need to acquire lock because we already allocated entries with log address)
 	struct SHRD_MAP *shrd_rw_map;
@@ -181,9 +191,15 @@ struct SHRD{
 	struct SHRD_TWRITE *twrite_cmd;
 	struct SHRD_REMAP *remap_cmd;
 
+	struct SHRD_TREAD *tread_cmd;
+	struct SHRD_SUBREAD *subread_cmd;
+
 	//these lists are used for finding free cmd entries and complete ongoing cmd entries.
 	struct list_head free_twrite_cmd_list;
 	struct list_head free_remap_cmd_list;
+
+	struct list_head free_tread_cmd_list;
+	struct list_head free_subread_cmd_list;
 
 	//for each index indicator for write and remap, should acquire lock to handle each entries.
 	//idx represents the index within log area, thus plz use this with SHRD_RW_LOG_START_IN_PAGE when calculate exact address.
@@ -229,24 +245,30 @@ static inline void shrd_clear_twrite_entry(struct SHRD_TWRITE* entry){
 	entry->in_use = 0;
 	//entry->header = NULL;
 	//entry->data = NULL;
-
 	BUG_ON(!entry->twrite_hdr);
 	memset(entry->twrite_hdr, 0x00, PAGE_SIZE);
-
 }
 
 static inline void shrd_clear_remap_entry(struct SHRD_REMAP* entry){
-
 	INIT_LIST_HEAD(&entry->remap_cmd_list);
 	entry->in_use = 0;
-
-	
 	memset(entry->remap_data[0], 0x00, PAGE_SIZE);
 }
 
+static inline void shrd_clear_tread_entry(struct SHRD_TREAD *entry){
+	INIT_LIST_HEAD(&entry->tread_cmd_list);
+	entry->orig_req = NULL;
+	INIT_LIST_HEAD(&entry->subread_list);
+	entry->subread_cnt = 0;
+}
+
+static inline void shrd_clear_subread_entry(struct SHRD_SUBREAD *entry){
+	INIT_LIST_HEAD(&entry->subread_cmd_list);
+	entry->orig_sector = 0;
+	entry->sect_cnt = 0;
+}
 
 static inline struct SHRD_TWRITE* shrd_get_twrite_entry(struct SHRD *shrd){
-
 	return list_first_entry_or_null(&shrd->free_twrite_cmd_list, struct SHRD_TWRITE, twrite_cmd_list);
 }
 
@@ -256,7 +278,6 @@ static inline void shrd_put_twrite_entry(struct SHRD *shrd, struct SHRD_TWRITE* 
 }
 
 static inline struct SHRD_REMAP* shrd_get_remap_entry(struct SHRD *shrd){
-
 	return list_first_entry_or_null(&shrd->free_remap_cmd_list, struct SHRD_REMAP, remap_cmd_list);
 }
 
@@ -265,10 +286,28 @@ static inline void shrd_put_remap_entry(struct SHRD *shrd, struct SHRD_REMAP* en
 	list_add_tail(&entry->remap_cmd_list, &shrd->free_remap_cmd_list);
 }
 
+static inline struct SHRD_TREAD* shrd_get_tread_entry(struct SHRD *shrd){
+	return list_first_entry_or_null(&shrd->free_tread_cmd_list, struct SHRD_TREAD, tread_cmd_list);
+}
+
+static inline void shrd_put_tread_entry(struct SHRD *shrd, struct SHRD_TREAD* entry){
+	shrd_clear_tread_entry(entry);
+	list_add_tail(&entry->tread_cmd_list, &shrd->free_tread_cmd_list);
+}
+
+static inline struct SHRD_SUBREAD* shrd_get_subread_entry(struct SHRD *shrd){
+	return list_first_entry_or_null(&shrd->free_subread_cmd_list, struct SHRD_SUBREAD, subread_cmd_list);
+}
+
+static inline void shrd_put_subread_entry(struct SHRD *shrd, struct SHRD_SUBREAD* entry){
+	shrd_clear_subread_entry(entry);
+	list_add_tail(&entry->subread_cmd_list, &shrd->free_subread_cmd_list);
+}
+
 u32 scsi_shrd_init(struct request_queue *q);
 struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr);
-int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry);
-void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree);
+int scsi_shrd_map_insert(struct SHRD_MAP_HEAD *mapping, struct SHRD_MAP *map_entry);
+void scsi_shrd_map_remove(u32 oaddr, struct SHRD_MAP_HEAD *mapping);
 
 
 #endif

@@ -273,7 +273,6 @@ int scsi_eh_scmd_add(struct scsi_cmnd *scmd, int eh_flag)
 enum blk_eh_timer_return scsi_times_out(struct request *req)
 {
 	struct scsi_cmnd *scmd = req->special;
-	struct scsi_device *sdev = scmd->device;
 	enum blk_eh_timer_return rtn = BLK_EH_NOT_HANDLED;
 
 #ifndef CONFIG_SCSI_SHRD_TEST0
@@ -282,8 +281,8 @@ enum blk_eh_timer_return scsi_times_out(struct request *req)
 	struct Scsi_Host *host;
 
 	if(!scmd){
-		printk(KERN_ERR "%s: %d: scmd is NULL, dump req\n", __func__, smp_processor_id());
-		printk(KERN_ERR "%s: %d: req cmd_flags %u, sectors %u, pos: %u\n", __func__, smp_processor_id(), req->cmd_flags, blk_rq_sectors(req), blk_rq_pos(req));
+		printk(KERN_ERR "%s: %u: scmd is NULL, dump req\n", __func__, smp_processor_id());
+		printk(KERN_ERR "%s: %u: req cmd_flags %llu, sectors %u, pos: %u\n", __func__, smp_processor_id(), req->cmd_flags, blk_rq_sectors(req), (u32)blk_rq_pos(req));
 		return rtn;
 	}
 	BUG_ON(!scmd);

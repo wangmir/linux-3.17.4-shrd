@@ -1706,11 +1706,14 @@ struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr){
 	return NULL;
 }
 
-int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry){
+int scsi_shrd_map_insert(struct SHRD_MAP_HEAD *mapping, struct SHRD_MAP *map_entry){
 
-	struct rb_node **new = &(root->rb_node), *parent = NULL;
+	struct rb_root *root = &mapping->rbtree_root;
+	struct rb_node **new = &(root->rb_node), *parent = NULL, *prev = NULL;
 
-
+	//linear map initialization
+	INIT_LIST_HEAD(&map_entry->list);
+	
 	while (*new){
 		struct SHRD_MAP *this = container_of(*new, struct SHRD_MAP, node);
 
@@ -1723,9 +1726,11 @@ int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry){
 			new = &((*new)->rb_right);
 		else{
 			//it means overwrite for the corresponding o_addr, so delete old map, invalid it, and insert new map.
+			list_del(&this->list);
 			rb_erase(&this->node, root);
 			memset(this, 0x00, sizeof(struct SHRD_MAP));
-			scsi_shrd_map_insert(root, map_entry);
+			
+			scsi_shrd_map_insert(mapping, map_entry);
 			
 			return 1;
 		}
@@ -1734,14 +1739,27 @@ int scsi_shrd_map_insert(struct rb_root *root, struct SHRD_MAP *map_entry){
 	rb_link_node(&map_entry->node, parent, new);
 	rb_insert_color(&map_entry->node, root);
 
+	//handle linear list map
+	prev = rb_prev(&map_entry->node);
+
+	if(prev){
+		struct SHRD_MAP *prev_map = rb_entry(prev, struct SHRD_MAP, node);
+		__list_add(&map_entry->list, &prev_map->list, prev_map->list.next);
+	}
+	else {
+		//this is first entry in the list
+		__list_add(&map_entry->list, &mapping->list_root, mapping->list_root.next);
+	}
 	return 1;
 	
 }
 
-void scsi_shrd_map_remove(u32 oaddr, struct rb_root *tree){
+void scsi_shrd_map_remove(u32 oaddr, struct SHRD_MAP_HEAD *mapping){
 
+	struct rb_root *tree = &mapping->rbtree_root;
 	struct SHRD_MAP *map_entry = scsi_shrd_map_search(tree, oaddr);
 	if(map_entry){
+		list_del(&map_entry->list);
 		rb_erase(&map_entry->node, tree);
 		memset(map_entry, 0x00, sizeof(struct SHRD_MAP));
 	}
@@ -1803,7 +1821,7 @@ u32 scsi_shrd_init(struct request_queue *q){
 	}
 
 	memset(sdev->shrd->shrd_rw_map, 0x00, sizeof(struct SHRD_MAP) * SHRD_RW_LOG_SIZE_IN_PAGE);
-	
+/*	
 	sdev->shrd->shrd_jn_map = (struct SHRD_MAP *)kmalloc(sizeof(struct SHRD_MAP) * SHRD_JN_LOG_SIZE_IN_PAGE, GFP_KERNEL);
 	if(sdev->shrd->shrd_jn_map == NULL){
 		rtn = 1;
@@ -1814,7 +1832,7 @@ u32 scsi_shrd_init(struct request_queue *q){
 	}
 
 	memset(sdev->shrd->shrd_jn_map, 0x00, sizeof(struct SHRD_MAP) * SHRD_JN_LOG_SIZE_IN_PAGE);
-
+*/
 	sdev->shrd->twrite_cmd = (struct SHRD_TWRITE *)kmalloc(sizeof(struct SHRD_TWRITE) * (SHRD_TWRITE_ENTRIES), GFP_KERNEL);
 	if(sdev->shrd->twrite_cmd == NULL){
 		rtn = 1;
@@ -1865,40 +1883,64 @@ u32 scsi_shrd_init(struct request_queue *q){
 			}
 		}
 	}
+
+	sdev->shrd->tread_cmd = (struct SHRD_TREAD *)kmalloc(sizeof(struct SHRD_TREAD) * SHRD_TREAD_ENTRIES, GFP_KERNEL);
+	if(sdev->shrd->tread_cmd == NULL){
+		rtn = 1;
+		sdev_printk(KERN_ERR, sdev, "%s: SHRD kmalloc failed on sdev->shrd->tread_cmd\n", __func__);
+		goto fin;
+	}
+
+	sdev->shrd->subread_cmd = (struct SHRD_SUBREAD *)kmalloc(sizeof(struct SHRD_SUBREAD) * SHRD_SUBREAD_ENTRIES, GFP_KERNEL);
+	if(sdev->shrd->subread_cmd == NULL){
+		rtn = 1;
+		sdev_printk(KERN_ERR, sdev, "%s: SHRD kmalloc failed on sdev->shrd->subread_cmd\n", __func__);
+		goto fin;
+	}
+
+	for(idx = 0; idx < SHRD_SUBREAD_ENTRIES; idx++){
+		sdev->shrd->subread_cmd[idx].bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_MAX_SUBREAD_ENTRY);
+		sdev->shrd->subread_cmd[idx].req = (struct request *)kmalloc(sizeof(struct request), GFP_KERNEL);
+	}
 	
 	// init spin_lock structure for log idx lock.
 	spin_lock_init(&sdev->shrd->__rw_log_lock);
-	spin_lock_init(&sdev->shrd->__jn_log_lock);
+	//spin_lock_init(&sdev->shrd->__jn_log_lock);
 
 	sdev->shrd->rw_log_lock = &sdev->shrd->__rw_log_lock;
-	sdev->shrd->jn_log_lock = &sdev->shrd->__jn_log_lock;
+	//sdev->shrd->jn_log_lock = &sdev->shrd->__jn_log_lock;
 
 	//need to link all twrite and remap cmd into free_xx_cmd_list
 	//in here.
-	spin_lock_irq(sdev->shrd->rw_log_lock);
 	INIT_LIST_HEAD(&sdev->shrd->free_twrite_cmd_list);
-
 	for(idx= 0; idx < (SHRD_TWRITE_ENTRIES); idx++){
 		INIT_LIST_HEAD(&sdev->shrd->twrite_cmd[idx].req_list);
 		sdev->shrd->twrite_cmd[idx].entry_num = idx;
 		list_add_tail(&sdev->shrd->twrite_cmd[idx].twrite_cmd_list, &sdev->shrd->free_twrite_cmd_list);
 	}
-	spin_unlock_irq(sdev->shrd->rw_log_lock);
 
-	spin_lock_irq(sdev->shrd->jn_log_lock);
 	INIT_LIST_HEAD(&sdev->shrd->free_remap_cmd_list);
-
 	for(idx=0; idx<SHRD_REMAP_ENTRIES; idx++){
 		sdev->shrd->remap_cmd[idx].entry_num = idx;
 		list_add_tail(&sdev->shrd->remap_cmd[idx].remap_cmd_list, &sdev->shrd->free_remap_cmd_list);
 	}
-	spin_unlock_irq(sdev->shrd->jn_log_lock);
 
-	sdev->shrd->rw_mapping = RB_ROOT;
-	sdev->shrd->jn_mapping = RB_ROOT;
+	INIT_LIST_HEAD(&sdev->shrd->free_tread_cmd_list);
+	for(idx = 0; idx < SHRD_TREAD_ENTRIES; idx++){
+		list_add_tail(&sdev->shrd->tread_cmd[idx].tread_cmd_list, &sdev->shrd->free_tread_cmd_list);
+	}
+
+	INIT_LIST_HEAD(&sdev->shrd->free_subread_cmd_list);
+	for(idx = 0 ; idx < SHRD_SUBREAD_ENTRIES; idx++){
+		list_add_tail(&sdev->shrd->subread_cmd[idx].subread_cmd_list, &sdev->shrd->free_subread_cmd_list);
+	}
+
+	sdev->shrd->rw_mapping.rbtree_root= RB_ROOT;
+	//sdev->shrd->jn_mapping.rbtree_root= RB_ROOT;
+	INIT_LIST_HEAD(&sdev->shrd->rw_mapping.list_root);
+	//INIT_LIST_HEAD(&sdev->shrd->jn_mapping.list_root);
 
 	sdev->shrd->in_remap = 0;
-
 	scsi_shrd_bd_init(q);
 
 fin:
@@ -2174,11 +2216,13 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			put_back = false;
 			break;
 		}
-
+		if(!next->bio){
+			sdev_printk(KERN_ERR, sdev, "%s: bio is NULL\n", __func__);
+			break;
+		}
 		if(next->bio->bi_bdev != shrd->bdev){
 			shrd_dbg_printk(KERN_ERR, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
 			break;
-			//BUG();
 		}
 
 		if(next->cmd_flags & REQ_DISCARD || next->cmd_flags & REQ_FLUSH || next->cmd_flags & REQ_FUA){
@@ -2561,7 +2605,7 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 			sdev_printk(KERN_ERR, sdev, "%s: request_list dump\n", __func__);
 			prq = NULL;
 			list_for_each_entry(prq, &twrite_entry->req_list, queuelist){
-				sdev_printk(KERN_ERR, sdev,"%s: %uth request, lpn: %u, sector size: %u\n", __func__, i, blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE, blk_rq_sectors(prq));
+				sdev_printk(KERN_ERR, sdev,"%s: %uth request, lpn: %u, sector size: %u\n", __func__, i, (u32)(blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE), blk_rq_sectors(prq));
 				i++;
 			}
 			BUG();
@@ -2691,7 +2735,7 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 
 	idx = 0;
 
-	for(node = rb_first(&shrd->rw_mapping); node; node = rb_next(node)){
+	for(node = rb_first(&shrd->rw_mapping.rbtree_root); node; node = rb_next(node)){
 
 		map = rb_entry(node, struct SHRD_MAP, node);
 		
@@ -2761,29 +2805,20 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 
 static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q, struct request *rq){
 
-	SHRD_TREAD *tread_entry = NULL;
-/*
-	u32 rq_sectors = blk_rq_sectors(rq);
-	u32 rq_pages = rq_sectors / SHRD_SECTORS_PER_PAGE + ((rq_sectors % SHRD_SECTORS_PER_PAGE == 0) ? 0 : 1);
-	u32 iter = 0;
-*/
-	/*
-		need to re-make read function for shrd
-		firstly, if the read request is 4KB, then just read from RW log or original location according to the situation.
+	struct SHRD_TREAD *tread_entry = NULL;
 
-		but, if not, two options can be possible
-		1. REMAP: if the read request contains the page on the RW log, then remap first, and read after remap
-		2. SPLIT: if the read request contains the page on the RW log, split the read request into several pieces of new bios,
-			and complete when the all of split requests are done.
+	if(!rq->bio)
+		return NULL;
 
-	*/
-/*
-	for(iter = 0; iter < rq_pages; iter++){
-
-		//check every pages for the requests
-		//it can be overhead so we might need to use bloom filter
+	if(blk_rq_sectors(rq) == SHRD_SECTORS_PER_PAGE){
+		//single page read, search the single specific page at the rb tree table
+		
 	}
-	*/
+
+	else{
+		//request is larger than a single page, we need to do range search within linear list table
+		
+	}
 
 	return tread_entry;
 }
@@ -2809,7 +2844,6 @@ static void scsi_request_fn(struct request_queue *q)
 	struct Scsi_Host *shost;
 	struct scsi_cmnd *cmd;
 	struct request *req;
-	int iter;
 	
 	/*
 	 * To start with, we keep looping until the queue is empty, or until
@@ -2978,7 +3012,7 @@ spcmd:
 
 				//normal request information at the front 
 				//start address, sector count
-				shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	%s	%u	%u\n", ((req->cmd_flags & REQ_WRITE) ? "W" : "R"), blk_rq_pos(req), blk_rq_sectors(req));
+				shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	%s	%u	%u\n", ((req->cmd_flags & REQ_WRITE) ? "W" : "R"), (u32)blk_rq_pos(req), blk_rq_sectors(req));
 
 				//specific information for the twrite hdr and remap data at the next
 				if(req->bio->bi_rw & REQ_SHRD_TWRITE_HDR){
