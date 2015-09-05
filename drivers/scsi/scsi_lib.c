@@ -2333,7 +2333,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		BUG();
 
 	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: bio request is %s, bi_sector %u, bi_size %d, bio->bi_rw %X", smp_processor_id(), __func__, 
-		(bio->bi_rw & REQ_SHRD_TWRITE_HDR) ? "twrite hdr": (bio->bi_rw & REQ_SHRD_TWRITE_DAT) ? "twrite data" : (bio->bi_rw & REQ_SHRD_REMAP) ? "remap" : "err",
+		(bio->bi_rw & REQ_SHRD_TWRITE_HDR) ? "twrite hdr": (bio->bi_rw & REQ_SHRD_TWRITE_DAT) ? "twrite data" : (bio->bi_rw & REQ_SHRD_REMAP) ? "remap" : (bio->bi_rw & REQ_SHRD_SUBREAD) ? "subread" : "err",
 		(u32)bio->bi_iter.bi_sector, bio->bi_iter.bi_size, (u32)bio->bi_rw);
 	
 	if(bio->bi_rw & REQ_SHRD_TWRITE_HDR){
@@ -2411,6 +2411,40 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		shrd->in_remap = 0;
 		
 		spin_unlock_irqrestore(q->queue_lock, flags);
+	}
+
+	else if(bio->bi_rw & REQ_SHRD_SUBREAD){
+		struct SHRD_SUBREAD *subread_entry = (struct SHRD_SUBREAD *)bio->bi_private;
+		struct SHRD_TREAD *tread_entry = subread_entry->tread;
+
+		spin_lock_irqsave(q->queue_lock, flags);
+
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: subread completion: subread_entry: %llx, tread_entry: %llx, orig request addr: %u, size: %u\n",
+			smp_processor_id(), __func__, (u64)subread_entry, (u64)tread_entry, (u32)blk_rq_pos(tread_entry->orig_req), blk_rq_sectors(tread_entry->orig_req));
+		list_del(&subread_entry->subread_cmd_list);
+		shrd_put_subread_entry(shrd, subread_entry);
+		tread_entry->subread_cnt--;
+		
+		if(list_empty(&tread_entry->subread_list)){
+			//all of subread in the tread is complete, we need to finish actual requests
+			struct request *req = tread_entry->orig_req;
+
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: tread completion: tread entry: %llx, request addr: %u, size: %u\n", 
+				smp_processor_id(), __func__, (u64)tread_entry, (u32)blk_rq_pos(req), blk_rq_sectors(req));
+
+			if(tread_entry->subread_cnt)
+				BUG(); //subread_cnt should be zero because the list is empty
+
+			ret = blk_update_request(req, 0, blk_rq_bytes(req));
+			BUG_ON(ret);
+			
+			blk_finish_request(req, 0);
+
+			list_del(&tread_entry->tread_cmd_list);
+			shrd_put_tread_entry(shrd, tread_entry);
+		}
+		spin_unlock_irqrestore(q->queue_lock, flags);
+		
 	}
 
 	scsi_shrd_bio_put(bio);
@@ -2675,7 +2709,7 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 			BUG();
 		}
 	}
-/*
+
 	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: dump remap data, t_addr_start: %u, t_addr_end: %u, count: %u\n", smp_processor_id(), __func__, remap_entry->remap_data[0]->t_addr_start,
 		remap_entry->remap_data[0]->t_addr_end, remap_entry->remap_data[0]->remap_count);
 
@@ -2685,7 +2719,7 @@ static void  scsi_shrd_make_remap_bio(struct request_queue *q, struct SHRD_REMAP
 
 	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: bio make complete, remap entry %llx, bio %llx, bi_sector %u, bi_size %u\n", smp_processor_id(), __func__,
 		(u64)remap_entry, (u64)bio, (u32)bio->bi_iter.bi_sector, (u32)bio->bi_iter.bi_size);
-*/
+
 	scsi_shrd_submit_bio(REQ_SYNC, bio, remap_entry->req);
 	
 }
@@ -2726,7 +2760,7 @@ static struct SHRD_REMAP* __scsi_shrd_do_remap_rw_log(struct request_queue *q, u
 			break;
 	}
 
-	end_idx = start_idx + idx;
+	end_idx = start_idx + idx; //idx is different from cnt
 	if(end_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		end_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
 
@@ -2813,21 +2847,114 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 /*
 	copy original request's data into subread bio
 */
-static void scsi_shrd_make_subread_bio(struct bio *orig_bio, struct SHRD_SUBREAD *subread, u32 t_addr, u32 page_offset, u32 page_cnt){
+static void scsi_shrd_make_subread_bio
+(struct request_queue *q, struct bio *orig_bio, struct SHRD_SUBREAD *subread, u32 target_addr, u32 page_offset, u32 page_cnt){
 //t_addr, page_offset, page_cnt are all based on the page address (not sect address, so need to translate)
 
+	struct scsi_device *sdev = q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
 	struct bio *bio, *pbio;
 	struct bio_vec bvec;
 	struct bvec_iter iter;
+	u32 idx = 0, len = 0;
 
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: start, subread: %llx, taddr: %u, page offset: %u, page count: %u", 
+		smp_processor_id(), __func__, (u64)subread, target_addr, page_offset, page_cnt);
+	
 	bio = subread->bio;
+	if(!bio)
+		BUG();
+
+	bio_init(bio);
+	bio->bi_pool = NULL;
+	bio->bi_flags |= BIO_POOL_NONE << BIO_POOL_OFFSET;
+	bio->bi_max_vecs = SHRD_NUM_MAX_SUBREAD_ENTRY;
+	bio->bi_io_vec = bio->bi_inline_vecs;
+
+	bio->bi_end_io = scsi_shrd_bio_endio;
+	bio->bi_rw = orig_bio->bi_rw;
+	bio->bi_rw |= REQ_SHRD_SUBREAD;
+	bio->bi_iter.bi_sector = target_addr << 3; //sect_addr
+	bio->bi_bdev = shrd->bdev;
+
+	bio->bi_private = subread;
+	pbio = orig_bio;
+
+	for_each_bio(pbio){
+		bio_for_each_segment(bvec, pbio, iter){
+			if(idx >= page_offset + page_cnt)
+				break;
+			if(idx >= page_offset){
+				len = bio_add_page(bio, bvec.bv_page, bvec.bv_len, bvec.bv_offset);
+				if(len < bvec.bv_len){
+					sdev_printk(KERN_ERR, sdev, "%s: bio_add_page failed\n", __func__);
+				}
+			}
+			idx++;
+		}
+	}
+
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: bio make complete, subread %llx, bio %llx, bi_sector %u, bi_size %d, \n", smp_processor_id(), __func__
+		, (u64)subread, (u64)bio, (u32)bio->bi_iter.bi_sector, (u32)bio->bi_iter.bi_size);
 
 }
 
-static void scsi_shrd_make_subread_list(struct request *req, struct SHRD_TREAD *tread_entry){
+static struct SHRD_TREAD* scsi_shrd_make_subread_list(struct request_queue *q, struct request *req){
+	//we need to do range search at the list map table to make subread list
 
+	struct scsi_device *sdev = q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
+	struct SHRD_MAP *pmap = NULL; 
+	struct SHRD_TREAD *tread_entry = NULL;
+	struct SHRD_SUBREAD *subread_entry = NULL;
+	u32 start_idx = (u32)blk_rq_pos(req) / SHRD_SECTORS_PER_PAGE; //start page idx
+	u32 end_idx = start_idx + (blk_rq_sectors(req) / SHRD_SECTORS_PER_PAGE) - 1;
+	u32 idx = start_idx;
 
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: subread_list making, start_idx: %u, end_idx: %u\n", smp_processor_id(), __func__, start_idx, end_idx);
 
+	list_for_each_entry(pmap, &shrd->rw_mapping.list_root, list){
+		if(pmap->o_addr >= start_idx && pmap->o_addr <= end_idx){
+			//actually, it's not hit, because they will be remapped
+			if(pmap->flags == SHRD_REMAPPING_MAP){
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: hit on remap table, but the map is in remapping, pmap->o_addr: %u, idx: %u\n",
+					smp_processor_id(), __func__, pmap->o_addr, idx);
+				continue;
+			}
+			//hit on the remap table
+			shrd_dbg_printk(KERN_INFO, sdev,"%d: %s: hit on remap table, pmap->o_addr: %u, idx: %u\n",
+				smp_processor_id(), __func__, pmap->o_addr, idx);
+
+			if(tread_entry == NULL){
+				tread_entry = shrd_get_tread_entry(shrd);
+				if(!tread_entry)
+					BUG();
+				tread_entry->orig_req = req;
+			}
+			if(pmap->o_addr > idx){
+				subread_entry = shrd_get_subread_entry(shrd);
+				if(!subread_entry)
+					BUG();
+				subread_entry->tread = tread_entry;
+				scsi_shrd_make_subread_bio(q, req->bio, subread_entry, idx, idx - start_idx, pmap->o_addr - idx);
+				list_add_tail(&subread_entry->subread_cmd_list, &tread_entry->subread_list);
+				tread_entry->subread_cnt++;
+				
+			}
+			subread_entry = shrd_get_subread_entry(shrd);
+			if(!subread_entry)
+				BUG();
+			subread_entry->tread = tread_entry;
+			scsi_shrd_make_subread_bio(q, req->bio, subread_entry, pmap->t_addr, pmap->o_addr - start_idx, 1);
+			list_add_tail(&subread_entry->subread_cmd_list, &tread_entry->subread_list);
+			tread_entry->subread_cnt++;
+			idx = pmap->o_addr + 1;
+		}
+		else if(pmap->o_addr > end_idx)
+			break;
+	}
+
+	return tread_entry;
 }
 
 static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q, struct request *rq){
@@ -2842,7 +2969,7 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 	if(blk_rq_sectors(rq) == SHRD_SECTORS_PER_PAGE){
 		struct SHRD_SUBREAD *subread = NULL;
 		struct SHRD_MAP *map = NULL;
-		map = scsi_shrd_map_search(shrd->rw_mapping, blk_rq_pos(rq) / SHRD_SECTORS_PER_PAGE);
+		map = scsi_shrd_map_search(&shrd->rw_mapping.rbtree_root, (u32)(blk_rq_pos(rq) / SHRD_SECTORS_PER_PAGE));
 
 		if(map == NULL)
 			return NULL;
@@ -2862,17 +2989,17 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 		}
 		subread = shrd_get_subread_entry(shrd);
 		list_add(&subread->subread_cmd_list, &tread_entry->subread_list);
+		subread->tread = tread_entry;
+		tread_entry->subread_cnt++;
 		
-		scsi_shrd_make_subread_bio(rq->bio, subread, map->t_addr, 0, 1);
+		scsi_shrd_make_subread_bio(q, rq->bio, subread, map->t_addr, 0, 1);
 				
 	}
 
 	else if(blk_rq_sectors(rq) > SHRD_SECTORS_PER_PAGE){
 		//request is larger than a single page, we need to do range search within linear list table
-		tread_entry = shrd_get_tread_entry(shrd);
-		scsi_shrd_make_subread_list(rq, tread_entry);
+		tread_entry = scsi_shrd_make_subread_list(q, rq);
 	}
-
 	return tread_entry;
 }
 
@@ -2940,19 +3067,19 @@ static void scsi_request_fn(struct request_queue *q)
 			BUG_ON(!sdev->shrd);
 
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
-			
+#if 0			
 			if(req->bio){
-				/*
+				
 				if(sdev->shrd->bdev != req->bio->bi_bdev){
 					struct request_queue *sdev_q, *bi_bdev_q;
 					sdev_q = bdev_get_queue(sdev->shrd->bdev);
 					bi_bdev_q = bdev_get_queue(req->bio->bi_bdev);
 					shrd_dbg_printk(KERN_ERR, sdev, "%d: %s: shrd->bdev is different from req->bio->bi_bdev, sdev_q is %llu, bdev_q is %llu\n", smp_processor_id(), __func__, 
 						(u64)sdev_q, (u64)bi_bdev_q);
-				}*/
-
+				}
 			}
-		
+#endif	
+
 			if(bio && bio->bi_rw & REQ_SHRD_TWRITE_HDR){ //handle former speical function for SHRD
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle twrite hdr request\n",smp_processor_id(), __func__);
 				goto spcmd;
@@ -2965,6 +3092,10 @@ static void scsi_request_fn(struct request_queue *q)
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle remap request\n", smp_processor_id(), __func__);
 				goto spcmd;
 			}
+			else if(bio && bio->bi_rw & REQ_SHRD_SUBREAD){
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle subread request\n", smp_processor_id(), __func__);
+				goto spcmd;
+			}
 			else if(!rq_data_dir(req)){
 				//read request, need to check whether need to change the address or not.
 				struct SHRD_TREAD *tread_entry = NULL;
@@ -2973,6 +3104,8 @@ static void scsi_request_fn(struct request_queue *q)
 
 				if(tread_entry){
 					struct SHRD_SUBREAD *p_subread = NULL;
+					blk_start_request(req); //start the request (and finish when the all of subread is end)
+					
 					//need to handle tread
 					if(list_empty(&tread_entry->subread_list))
 						BUG();

@@ -64,6 +64,7 @@
 #define REQ_SHRD_TWRITE_HDR REQ_SOFTBARRIER //softbarrier is not used for the bio, so borrow it
 #define REQ_SHRD_TWRITE_DAT REQ_NOMERGE
 #define REQ_SHRD_REMAP REQ_STARTED
+#define REQ_SHRD_SUBREAD REQ_DONTPREP
 
 #ifdef CONFIG_SCSI_SHRD_DEBUG_PRINTK
 #define shrd_dbg_printk(prefix, sdev, fmt, a...)	\
@@ -94,6 +95,7 @@ enum SHRD_REQ_FLAG {
 	SHRD_REQ_TWRITE_DATA,
 	SHRD_REQ_REMAP,
 	SHRD_REQ_SPREAD,
+	SHRD_REQ_SUBREAD,
 };
 
 struct SHRD_MAP {
@@ -158,11 +160,10 @@ struct SHRD_REMAP{
 	when the read operation is larger than 4KB and contains the data in the twrite log region
 */
 struct SHRD_SUBREAD{
+	struct SHRD_TREAD *tread;
 	struct list_head subread_cmd_list;
 	struct bio *bio;
-	struct req *req;
-	u32 orig_sector; //o_addr in sector, this will only set when this subread is for the twrite log region, and this subread always should be 4KB
-	u32 sect_cnt;
+	struct request *req;
 };
 
 struct SHRD_TREAD{
@@ -266,8 +267,7 @@ static inline void shrd_clear_tread_entry(struct SHRD_TREAD *entry){
 
 static inline void shrd_clear_subread_entry(struct SHRD_SUBREAD *entry){
 	INIT_LIST_HEAD(&entry->subread_cmd_list);
-	entry->orig_sector = 0;
-	entry->sect_cnt = 0;
+	entry->tread = NULL;
 }
 
 static inline struct SHRD_TWRITE* shrd_get_twrite_entry(struct SHRD *shrd){
