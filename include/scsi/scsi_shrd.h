@@ -201,6 +201,8 @@ struct SHRD{
 	struct list_head free_tread_cmd_list;
 	struct list_head free_subread_cmd_list;
 
+	struct list_head ongoing_tread_cmd_list; //if tread is ongoing, then reemap should be delayed until complete of tread
+
 	//for each index indicator for write and remap, should acquire lock to handle each entries.
 	//idx represents the index within log area, thus plz use this with SHRD_RW_LOG_START_IN_PAGE when calculate exact address.
 	u32 rw_log_start_idx;

@@ -1925,6 +1925,7 @@ u32 scsi_shrd_init(struct request_queue *q){
 		list_add_tail(&sdev->shrd->remap_cmd[idx].remap_cmd_list, &sdev->shrd->free_remap_cmd_list);
 	}
 
+	INIT_LIST_HEAD(&sdev->shrd->ongoing_tread_cmd_list);
 	INIT_LIST_HEAD(&sdev->shrd->free_tread_cmd_list);
 	for(idx = 0; idx < SHRD_TREAD_ENTRIES; idx++){
 		list_add_tail(&sdev->shrd->tread_cmd[idx].tread_cmd_list, &sdev->shrd->free_tread_cmd_list);
@@ -2784,6 +2785,12 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 	u32 new_idx = shrd->rw_log_new_idx;
 	u32 size; //used log size
 
+	//if there are ongoing tread, then we cannot do remap until completion of tread
+	if(!list_empty(&shrd->ongoing_tread_cmd_list)){
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: there are ongoing tread_cmd we'll stall remap\n", smp_processor_id(), __func__);
+		return NULL;
+	}
+
 	(new_idx >= start_idx) ? (size = new_idx - start_idx) : (size = SHRD_RW_LOG_SIZE_IN_PAGE - start_idx + new_idx);
 
 	if(size > SHRD_RW_REMAP_THRESHOLD_IN_PAGE){
@@ -2803,21 +2810,67 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 	
 }
 
+/*
+	copy original request's data into subread bio
+*/
+static void scsi_shrd_make_subread_bio(struct bio *orig_bio, struct SHRD_SUBREAD *subread, u32 t_addr, u32 page_offset, u32 page_cnt){
+//t_addr, page_offset, page_cnt are all based on the page address (not sect address, so need to translate)
+
+	struct bio *bio, *pbio;
+	struct bio_vec bvec;
+	struct bvec_iter iter;
+
+	bio = subread->bio;
+
+}
+
+static void scsi_shrd_make_subread_list(struct request *req, struct SHRD_TREAD *tread_entry){
+
+
+
+}
+
 static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q, struct request *rq){
 
+	struct scsi_device *sdev = q->queuedata;
+	struct SHRD* shrd = sdev->shrd;
 	struct SHRD_TREAD *tread_entry = NULL;
 
 	if(!rq->bio)
 		return NULL;
 
 	if(blk_rq_sectors(rq) == SHRD_SECTORS_PER_PAGE){
-		//single page read, search the single specific page at the rb tree table
+		struct SHRD_SUBREAD *subread = NULL;
+		struct SHRD_MAP *map = NULL;
+		map = scsi_shrd_map_search(shrd->rw_mapping, blk_rq_pos(rq) / SHRD_SECTORS_PER_PAGE);
+
+		if(map == NULL)
+			return NULL;
+
+		if(map->flags != SHRD_VALID_MAP){
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: the page is in remap table but on remap or invalid, t_addr: %u, o_addr: %u",
+				smp_processor_id(), __func__, map->t_addr, map->o_addr);
+			return NULL;
+		}
 		
+		//single page read, search the single specific page at the rb tree table
+		tread_entry = shrd_get_tread_entry(shrd);
+		tread_entry->orig_req = rq;
+		if(tread_entry == NULL){
+			sdev_printk(KERN_ERR, sdev, "%s: get tread entry failed, it should not be happened\n", __func__);
+			BUG();
+		}
+		subread = shrd_get_subread_entry(shrd);
+		list_add(&subread->subread_cmd_list, &tread_entry->subread_list);
+		
+		scsi_shrd_make_subread_bio(rq->bio, subread, map->t_addr, 0, 1);
+				
 	}
 
-	else{
+	else if(blk_rq_sectors(rq) > SHRD_SECTORS_PER_PAGE){
 		//request is larger than a single page, we need to do range search within linear list table
-		
+		tread_entry = shrd_get_tread_entry(shrd);
+		scsi_shrd_make_subread_list(rq, tread_entry);
 	}
 
 	return tread_entry;
@@ -2889,14 +2942,14 @@ static void scsi_request_fn(struct request_queue *q)
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
 			
 			if(req->bio){
+				/*
 				if(sdev->shrd->bdev != req->bio->bi_bdev){
 					struct request_queue *sdev_q, *bi_bdev_q;
-					
 					sdev_q = bdev_get_queue(sdev->shrd->bdev);
 					bi_bdev_q = bdev_get_queue(req->bio->bi_bdev);
 					shrd_dbg_printk(KERN_ERR, sdev, "%d: %s: shrd->bdev is different from req->bio->bi_bdev, sdev_q is %llu, bdev_q is %llu\n", smp_processor_id(), __func__, 
 						(u64)sdev_q, (u64)bi_bdev_q);
-				}
+				}*/
 
 			}
 		
@@ -2909,8 +2962,28 @@ static void scsi_request_fn(struct request_queue *q)
 				goto spcmd;
 			}
 			else if(bio && bio->bi_rw & REQ_SHRD_REMAP){
-				
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle remap request\n", smp_processor_id(), __func__);
+				goto spcmd;
+			}
+			else if(!rq_data_dir(req)){
+				//read request, need to check whether need to change the address or not.
+				struct SHRD_TREAD *tread_entry = NULL;
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic read function\n", smp_processor_id(), __func__);
+				tread_entry = scsi_shrd_check_read_requests(q, req);
+
+				if(tread_entry){
+					struct SHRD_SUBREAD *p_subread = NULL;
+					//need to handle tread
+					if(list_empty(&tread_entry->subread_list))
+						BUG();
+					//for ongoing indicate
+					list_add_tail(&tread_entry->tread_cmd_list, &sdev->shrd->ongoing_tread_cmd_list);
+					
+					list_for_each_entry(p_subread, &tread_entry->subread_list, subread_cmd_list){
+						scsi_shrd_submit_bio(0,p_subread->bio, p_subread->req);
+					}
+					continue;
+				}
 				goto spcmd;
 			}
 			else if(sdev->shrd->in_remap){
@@ -2940,22 +3013,10 @@ static void scsi_request_fn(struct request_queue *q)
 				scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->header, twrite_entry->header_rq);
 				continue;
 			}
-			else if(!rq_data_dir(req)){
-				struct SHRD_TREAD *tread_entry = NULL;
-				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic read function\n", smp_processor_id(), __func__);
-				tread_entry = scsi_shrd_check_read_requests(q, req);
-
-				if(tread_entry){
-					//need to handle tread
-						
-				}
-				goto spcmd;
-				//read request, need to check whether need to change the address or not.
-			}
+			
 			else {	//generic prep procedure (for non_twrite request)
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic write function\n", smp_processor_id(), __func__);
 				goto spcmd;
-				
 			}
 spcmd:
 			if (!(req->cmd_flags & REQ_DONTPREP))
