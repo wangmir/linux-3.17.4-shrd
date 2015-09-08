@@ -1776,7 +1776,7 @@ static void scsi_shrd_bd_init(struct request_queue *q){
 		BUG();
 		return;
 	}
-
+/*
 	if(!bdget(shrd->bdev->bd_dev)){
 		sdev_printk(KERN_ERR, sdev, "%s: bdget error\n", __func__);
 		BUG();
@@ -1788,7 +1788,7 @@ static void scsi_shrd_bd_init(struct request_queue *q){
 		bdput(shrd->bdev);
 		BUG();
 		return;
-	}
+	}*/
 	
 }
 
@@ -1891,12 +1891,16 @@ u32 scsi_shrd_init(struct request_queue *q){
 		goto fin;
 	}
 
+	memset(sdev->shrd->tread_cmd, 0x00, sizeof(struct SHRD_TREAD) * SHRD_TREAD_ENTRIES);
+
 	sdev->shrd->subread_cmd = (struct SHRD_SUBREAD *)kmalloc(sizeof(struct SHRD_SUBREAD) * SHRD_SUBREAD_ENTRIES, GFP_KERNEL);
 	if(sdev->shrd->subread_cmd == NULL){
 		rtn = 1;
 		sdev_printk(KERN_ERR, sdev, "%s: SHRD kmalloc failed on sdev->shrd->subread_cmd\n", __func__);
 		goto fin;
 	}
+
+	memset(sdev->shrd->subread_cmd, 0x00, sizeof(struct SHRD_SUBREAD) * SHRD_SUBREAD_ENTRIES);
 
 	for(idx = 0; idx < SHRD_SUBREAD_ENTRIES; idx++){
 		sdev->shrd->subread_cmd[idx].bio = bio_kmalloc(GFP_KERNEL, SHRD_NUM_MAX_SUBREAD_ENTRY);
@@ -1928,11 +1932,14 @@ u32 scsi_shrd_init(struct request_queue *q){
 	INIT_LIST_HEAD(&sdev->shrd->ongoing_tread_cmd_list);
 	INIT_LIST_HEAD(&sdev->shrd->free_tread_cmd_list);
 	for(idx = 0; idx < SHRD_TREAD_ENTRIES; idx++){
+		INIT_LIST_HEAD(&sdev->shrd->tread_cmd[idx].tread_cmd_list);
+		INIT_LIST_HEAD(&sdev->shrd->tread_cmd[idx].subread_list);
 		list_add_tail(&sdev->shrd->tread_cmd[idx].tread_cmd_list, &sdev->shrd->free_tread_cmd_list);
 	}
 
 	INIT_LIST_HEAD(&sdev->shrd->free_subread_cmd_list);
 	for(idx = 0 ; idx < SHRD_SUBREAD_ENTRIES; idx++){
+		INIT_LIST_HEAD(&sdev->shrd->subread_cmd[idx].subread_cmd_list);
 		list_add_tail(&sdev->shrd->subread_cmd[idx].subread_cmd_list, &sdev->shrd->free_subread_cmd_list);
 	}
 
@@ -2133,6 +2140,10 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of tiny requests\n", __func__);
 		goto no_pack;
 	}
+	if(blk_rq_pos(rq) < 4096){
+		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack beacuse it is lower block\n", __func__);
+		goto no_pack;
+	}
 
 	max_packed_rw = SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR;
 	req_sectors += blk_rq_sectors(cur);
@@ -2244,6 +2255,10 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		if(blk_rq_sectors(next) < SHRD_SECTORS_PER_PAGE){ //under 4KB write is not the common write situation.
 			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of tiny next requests\n", __func__);
 			break;
+		}
+		if(blk_rq_pos(next) < 4096){
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack beacuse it is lower block\n", __func__);
+			break;;
 		}
 
 		req_sectors += blk_rq_sectors(next);
@@ -2432,8 +2447,10 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: tread completion: tread entry: %llx, request addr: %u, size: %u\n", 
 				smp_processor_id(), __func__, (u64)tread_entry, (u32)blk_rq_pos(req), blk_rq_sectors(req));
 
-			if(tread_entry->subread_cnt)
+			if(tread_entry->subread_cnt){
+				sdev_printk(KERN_ERR, sdev, "%d: %s:subread_list is empty, but subread_cnt is not 0, cnt: %u\n", smp_processor_id(), __func__, tread_entry->subread_cnt);
 				BUG(); //subread_cnt should be zero because the list is empty
+			}
 
 			ret = blk_update_request(req, 0, blk_rq_bytes(req));
 			BUG_ON(ret);
@@ -2966,6 +2983,8 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 	if(!rq->bio)
 		return NULL;
 
+	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: read checking start\n", smp_processor_id(), __func__);
+
 	if(blk_rq_sectors(rq) == SHRD_SECTORS_PER_PAGE){
 		struct SHRD_SUBREAD *subread = NULL;
 		struct SHRD_MAP *map = NULL;
@@ -2979,6 +2998,8 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 				smp_processor_id(), __func__, map->t_addr, map->o_addr);
 			return NULL;
 		}
+
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: map hit, rq pos: %u, map oaddr: %u, taddr: %u\n", smp_processor_id(), __func__, (u32)blk_rq_pos(rq), map->o_addr, map->t_addr);
 		
 		//single page read, search the single specific page at the rb tree table
 		tread_entry = shrd_get_tread_entry(shrd);
@@ -2988,6 +3009,11 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 			BUG();
 		}
 		subread = shrd_get_subread_entry(shrd);
+		if(!subread){
+			sdev_printk(KERN_ERR, sdev, "%s: get subread entry failed\n", __func__);
+			BUG();
+		}
+		
 		list_add(&subread->subread_cmd_list, &tread_entry->subread_list);
 		subread->tread = tread_entry;
 		tread_entry->subread_cnt++;
@@ -3099,11 +3125,12 @@ static void scsi_request_fn(struct request_queue *q)
 			else if(!rq_data_dir(req)){
 				//read request, need to check whether need to change the address or not.
 				struct SHRD_TREAD *tread_entry = NULL;
-				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle generic read function\n", smp_processor_id(), __func__);
+				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle read function\n", smp_processor_id(), __func__);
 				tread_entry = scsi_shrd_check_read_requests(q, req);
 
 				if(tread_entry){
 					struct SHRD_SUBREAD *p_subread = NULL;
+					shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: shrd tread handling start\n", smp_processor_id(), __func__);
 					blk_start_request(req); //start the request (and finish when the all of subread is end)
 					
 					//need to handle tread
