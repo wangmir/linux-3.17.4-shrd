@@ -3024,6 +3024,8 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 
 	else if(blk_rq_sectors(rq) > SHRD_SECTORS_PER_PAGE){
 		//request is larger than a single page, we need to do range search within linear list table
+		//test
+		//return NULL;
 		tread_entry = scsi_shrd_make_subread_list(q, rq);
 	}
 	return tread_entry;
