@@ -1811,8 +1811,15 @@ static unsigned int ata_eh_analyze_tf(struct ata_queued_cmd *qc,
 	case ATA_DEV_ATA:
 		if (err & ATA_ICRC)
 			qc->err_mask |= AC_ERR_ATA_BUS;
-		if (err & (ATA_UNC | ATA_AMNF))
+		if (err & (ATA_UNC | ATA_AMNF)){
 			qc->err_mask |= AC_ERR_MEDIA;
+			if(err & ATA_UNC){
+				printk(KERN_ERR "SHRD_dbg:: ATA_UNC error, err %x\n", err);
+			}
+			if(err & ATA_AMNF){
+				printk(KERN_ERR "SHRD_dbg:: ATA_AMNF error, err %x\n", err);
+			}
+		}
 		if (err & ATA_IDNF)
 			qc->err_mask |= AC_ERR_INVALID;
 		break;

@@ -2946,12 +2946,14 @@ static struct SHRD_TREAD* scsi_shrd_make_subread_list(struct request_queue *q, s
 				tread_entry = shrd_get_tread_entry(shrd);
 				if(!tread_entry)
 					BUG();
+				list_del(&tread_entry->tread_cmd_list);
 				tread_entry->orig_req = req;
 			}
 			if(pmap->o_addr > idx){
 				subread_entry = shrd_get_subread_entry(shrd);
 				if(!subread_entry)
 					BUG();
+				list_del(&subread_entry->subread_cmd_list);
 				subread_entry->tread = tread_entry;
 				scsi_shrd_make_subread_bio(q, req->bio, subread_entry, idx, idx - start_idx, pmap->o_addr - idx);
 				list_add_tail(&subread_entry->subread_cmd_list, &tread_entry->subread_list);
@@ -2961,6 +2963,7 @@ static struct SHRD_TREAD* scsi_shrd_make_subread_list(struct request_queue *q, s
 			subread_entry = shrd_get_subread_entry(shrd);
 			if(!subread_entry)
 				BUG();
+			list_del(&subread_entry->subread_cmd_list);
 			subread_entry->tread = tread_entry;
 			scsi_shrd_make_subread_bio(q, req->bio, subread_entry, pmap->t_addr, pmap->o_addr - start_idx, 1);
 			list_add_tail(&subread_entry->subread_cmd_list, &tread_entry->subread_list);
@@ -3008,11 +3011,13 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 			sdev_printk(KERN_ERR, sdev, "%s: get tread entry failed, it should not be happened\n", __func__);
 			BUG();
 		}
+		list_del(&tread_entry->tread_cmd_list);
 		subread = shrd_get_subread_entry(shrd);
 		if(!subread){
 			sdev_printk(KERN_ERR, sdev, "%s: get subread entry failed\n", __func__);
 			BUG();
 		}
+		list_del(&subread->subread_cmd_list);
 		
 		list_add(&subread->subread_cmd_list, &tread_entry->subread_list);
 		subread->tread = tread_entry;
@@ -3095,6 +3100,7 @@ static void scsi_request_fn(struct request_queue *q)
 			BUG_ON(!sdev->shrd);
 
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
+			
 #if 0			
 			if(req->bio){
 				
@@ -3128,6 +3134,10 @@ static void scsi_request_fn(struct request_queue *q)
 				//read request, need to check whether need to change the address or not.
 				struct SHRD_TREAD *tread_entry = NULL;
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle read function\n", smp_processor_id(), __func__);
+
+				//test
+				goto spcmd;
+				
 				tread_entry = scsi_shrd_check_read_requests(q, req);
 
 				if(tread_entry){
@@ -3194,7 +3204,7 @@ spcmd:
 
 		if (!scsi_dev_queue_ready(q, sdev)){		
 			if(sdev->shrd_on)
-				shrd_dbg_printk(KERN_INFO, sdev, "%s: break because dev queue is not ready\n", __func__);		
+				shrd_dbg_printk(KERN_INFO, sdev, "%s: break because dev queue is not ready\n", __func__);
 			break;
 		}
 		/*

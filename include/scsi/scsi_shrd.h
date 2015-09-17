@@ -13,7 +13,7 @@
 
 //#define SHRD_NUM_CORES 2 //Samsung RSP SSD specific design, 
 
-#define DEV_PATH "/dev/sde" //should be modified to dynamic changing.
+#define DEV_PATH "/dev/sdb" //should be modified to dynamic changing.
 
 #define SHRD_NUM_CORES 2
 
