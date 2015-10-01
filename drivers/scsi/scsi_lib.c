@@ -2677,9 +2677,26 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 			shrd->shrd_rw_map[idx].t_addr = SHRD_RW_LOG_START_IN_PAGE+ idx;
 			shrd->shrd_rw_map[idx].o_addr = header->o_addr[idx - shrd->rw_log_new_idx];
 			if(shrd->shrd_rw_map[idx].flags == SHRD_VALID_MAP){
+				struct rb_node *node;
+				struct SHRD_MAP *map;
 				printk(KERN_ERR "ERROR on packing RW\n");
 				sdev_printk(KERN_ERR, sdev, "%s: idx: %u, log_start: %u, log_new: %u\n", __func__, idx, shrd->rw_log_start_idx, shrd->rw_log_new_idx);
-				mdelay(20000);
+
+				for(node = rb_first(&shrd->rw_mapping.rbtree_root); node; node = rb_next(node)){
+					map = rb_entry(node, struct SHRD_MAP, node);
+					if(shrd->shrd_rw_map[idx].o_addr == map->o_addr){
+						sdev_printk(KERN_ERR, sdev, "%s: o_addr is same, rw_map[%u].oaddr: %u, taddr: %u, map->oaddr: %u, taddr: %u\n", __func__
+							, idx, shrd->shrd_rw_map[idx].o_addr, shrd->shrd_rw_map[idx].t_addr, map->o_addr, map->t_addr);	
+					}
+					if(shrd->shrd_rw_map[idx].t_addr == map->t_addr){
+						sdev_printk(KERN_ERR, sdev, "%s: t_addr is same, rw_map[%u].oaddr: %u, taddr: %u, map->oaddr: %u, taddr: %u\n", __func__
+							, idx, shrd->shrd_rw_map[idx].o_addr, shrd->shrd_rw_map[idx].t_addr, map->o_addr, map->t_addr);	
+					}
+					
+					sdev_printk(KERN_ERR, sdev, "%s: rbtree traversing, map->oaddr: %u, taddr: %u\n", __func__, map->o_addr, map->t_addr);
+				}
+				
+				
 				BUG();//should be remapped
 			}
 			shrd->shrd_rw_map[idx].flags = SHRD_VALID_MAP;
@@ -2828,11 +2845,14 @@ static void __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 size){
 		}
 
 		if(idx == cnt){
-			list_add_tail(&entry->remap_cmd_list, &shrd->ongoing_remap_cmd_list);
-			break;
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remapping should be stopped in here, idx: %u, cnt: %u\n", smp_processor_id(), __func__, idx, cnt);
+			//list_add_tail(&entry->remap_cmd_list, &shrd->ongoing_remap_cmd_list);
+			//break;
 		}
 	}
-
+	//temp
+	list_add_tail(&entry->remap_cmd_list, &shrd->ongoing_remap_cmd_list);
+	
 	shrd->rw_log_start_idx = end_idx + 1;
 	if(shrd->rw_log_start_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		shrd->rw_log_start_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
