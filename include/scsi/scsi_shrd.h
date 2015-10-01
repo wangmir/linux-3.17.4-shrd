@@ -21,24 +21,24 @@
 
 #define SHRD_RW_THRESHOLD_IN_SECTOR 32 //under 16KB write requests will be gathered as twrite data
 
-#define SHRD_TWRITE_ENTRIES 32
-#define SHRD_REMAP_ENTRIES 32  // (experimental)
-#define SHRD_TREAD_ENTRIES 32
-#define SHRD_SUBREAD_ENTRIES (SHRD_TREAD_ENTRIES * 128)
+#define SHRD_TWRITE_ENTRIES (32U)
+#define SHRD_REMAP_ENTRIES (32U)  // (experimental)
+#define SHRD_TREAD_ENTRIES (32U)
+#define SHRD_SUBREAD_ENTRIES (SHRD_TREAD_ENTRIES * 128U)
 
-#define SHRD_RW_LOG_SIZE_IN_MB (32)
-#define SHRD_RW_LOG_SIZE_IN_PAGE (SHRD_RW_LOG_SIZE_IN_MB * 256)
+#define SHRD_RW_LOG_SIZE_IN_MB (128U)
+#define SHRD_RW_LOG_SIZE_IN_PAGE (SHRD_RW_LOG_SIZE_IN_MB * 256U)
 
-#define SHRD_JN_LOG_SIZE_IN_MB (128)
-#define SHRD_JN_LOG_SIZE_IN_PAGE (SHRD_JN_LOG_SIZE_IN_MB * 256)
+#define SHRD_JN_LOG_SIZE_IN_MB (128U)
+#define SHRD_JN_LOG_SIZE_IN_PAGE (SHRD_JN_LOG_SIZE_IN_MB * 256U)
 
 //110 * 1024 * 256 - SHRD_JN_LOG_SIZE_IN_PAGE - SHRD_RW_LOG_SIZE_IN_PAGE
-#define SHRD_TOTAL_LPN (110 * 1024 * 256) //110GB
+#define SHRD_TOTAL_LPN (110U * 1024U * 256U) //110GB
 //#define SHRD_TOTAL_LPN (50 * 1024 * 256) 
 
-#define SHRD_LOG_START_IN_PAGE (SHRD_TOTAL_LPN - SHRD_RW_LOG_SIZE_IN_PAGE - SHRD_JN_LOG_SIZE_IN_PAGE)
-#define SHRD_RW_LOG_START_IN_PAGE (SHRD_JN_LOG_START_IN_PAGE + SHRD_JN_LOG_SIZE_IN_PAGE)
-#define SHRD_JN_LOG_START_IN_PAGE SHRD_LOG_START_IN_PAGE
+#define SHRD_LOG_START_IN_PAGE ((SHRD_TOTAL_LPN - SHRD_RW_LOG_SIZE_IN_PAGE - SHRD_JN_LOG_SIZE_IN_PAGE))
+#define SHRD_RW_LOG_START_IN_PAGE ((SHRD_JN_LOG_START_IN_PAGE + SHRD_JN_LOG_SIZE_IN_PAGE))
+#define SHRD_JN_LOG_START_IN_PAGE (SHRD_LOG_START_IN_PAGE)
 
 #define SHRD_CMD_START_IN_PAGE SHRD_TOTAL_LPN
 #define SHRD_TWRITE_CMD_START_IN_PAGE SHRD_CMD_START_IN_PAGE
@@ -50,14 +50,16 @@
 #define SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR 1024
 
 #define SHRD_NUM_MAX_TWRITE_ENTRY 128
-#define SHRD_NUM_MAX_REMAP_ENTRY 510
+#define SHRD_NUM_MAX_REMAP_ENTRY 511
 #define SHRD_NUM_MAX_SUBREAD_ENTRY 128
 
 #define SHRD_REMAP_DATA_PAGE 1 // 1page (experimental)
 #define SHRD_MAX_REMAP_DATA_ENTRIES (SHRD_REMAP_DATA_PAGE * SHRD_NUM_MAX_REMAP_ENTRY)
 
 
-#define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 1)
+#define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 2)
+#define SHRD_MAX_REMAP_SIZE_IN_PAGE (SHRD_RW_REMAP_THRESHOLD_IN_PAGE >> 2)
+#define SHRD_NUM_REMAP_ENTRIES_PER_PERIOD (SHRD_MAX_REMAP_SIZE_IN_PAGE / SHRD_NUM_MAX_REMAP_ENTRY)
 
 #define SHRD_INVALID_LPN 0x7fffffff
 
@@ -140,8 +142,6 @@ struct SHRD_TWRITE{
 	Each remap header is for each FTL core.
 */
 struct SHRD_REMAP_DATA{
-	u32 t_addr_start;
-	u32 t_addr_end;
 	u32 remap_count;
 	u32 t_addr[SHRD_NUM_MAX_REMAP_ENTRY];
 	u32 o_addr[SHRD_NUM_MAX_REMAP_ENTRY];
@@ -202,7 +202,8 @@ struct SHRD{
 	struct list_head free_tread_cmd_list;
 	struct list_head free_subread_cmd_list;
 
-	struct list_head ongoing_tread_cmd_list; //if tread is ongoing, then reemap should be delayed until complete of tread
+	struct list_head ongoing_remap_cmd_list; //because the remap can be plural, we need to maintain the list of remap, and send the next remap cmd after former's end
+	struct list_head ongoing_tread_cmd_list; //if tread is ongoing, then remap should be delayed until complete of tread
 
 	//for each index indicator for write and remap, should acquire lock to handle each entries.
 	//idx represents the index within log area, thus plz use this with SHRD_RW_LOG_START_IN_PAGE when calculate exact address.
