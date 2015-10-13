@@ -2377,6 +2377,8 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 				BUG();
 			if(!prq->bio)
 				BUG();
+			if(!prq->q)
+				BUG();
 			
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: completion start, prq pos: %u, sectors: %u\n", smp_processor_id(), __func__, (u32)blk_rq_pos(prq), (u32)blk_rq_sectors(prq));
 
@@ -2565,10 +2567,10 @@ static struct bio *scsi_shrd_make_twrite_header_bio(struct request_queue *q, str
 
 	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: dump twrite header, addr_start: %u, count: %u\n", smp_processor_id(), __func__, 
 		twrite_entry->twrite_hdr->t_addr_start, twrite_entry->twrite_hdr->io_count);
-
+/*
 	for(i=0; i < twrite_entry->twrite_hdr->io_count; i++){
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: oaddr: %u\n", smp_processor_id(), __func__, twrite_entry->twrite_hdr->o_addr[i]);
-	}
+	}*/
 
 	return bio;
 }
@@ -2773,25 +2775,19 @@ static void __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 size){
 
 	for(idx = 0; idx < size; idx++){
 		u32 log_idx = idx + start_idx;
-
-		if(shrd->shrd_rw_map[log_idx].flags == SHRD_VALID_MAP){
+		if(shrd->shrd_rw_map[log_idx].flags == SHRD_VALID_MAP)
 			cnt++;
-			if(cnt == SHRD_NUM_MAX_REMAP_ENTRY * SHRD_NUM_REMAP_ENTRIES_PER_PERIOD)
-				break;
-		}
-		if(log_idx == SHRD_RW_LOG_SIZE_IN_PAGE - 1)
-			break;
 	}
 
 	if(cnt == 0){
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: there are no valid entries within start_idx: %u, end_idx: %u\n",smp_processor_id(),  __func__, start_idx, start_idx + idx);
-		shrd->rw_log_start_idx = end_idx + 1;
+		shrd->rw_log_start_idx = start_idx + idx + 1;
 		if(shrd->rw_log_start_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 			shrd->rw_log_start_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
 		return;
 	}
-	
 	entry = shrd_get_remap_entry(shrd);
+	
 	if(entry == NULL){
 		sdev_printk(KERN_INFO, sdev, "%s: has no remap entry\n", __func__);
 		return;
@@ -2799,18 +2795,9 @@ static void __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 size){
 	list_del(&entry->remap_cmd_list);
 	shrd_clear_remap_entry(entry);
 
-	end_idx = start_idx + idx; //idx is different from cnt
+	end_idx = start_idx + size - 1; //idx is different from cnt
 	
-	if(end_idx >= SHRD_RW_LOG_SIZE_IN_PAGE){
-		end_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
-		BUG(); //it should not be happened
-	}
-
-	//entry->remap_data[0]->remap_count = cnt;
-
 	idx = 0;
-
-	shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remap find start, start_idx: %u, cnt %u\n",smp_processor_id(),  __func__, start_idx, cnt);
 
 	for(node = rb_first(&shrd->rw_mapping.rbtree_root); node; node = rb_next(node)){
 
@@ -2834,8 +2821,6 @@ static void __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 size){
 				list_del(&entry->remap_cmd_list);
 				shrd_clear_remap_entry(entry);
 			}
-
-			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: map->o_addr: %u, map->t_addr: %u\n", smp_processor_id(), __func__, map->o_addr, map->t_addr);
 			
 			entry->remap_data[0]->o_addr[entry->remap_data[0]->remap_count] = map->o_addr;
 			entry->remap_data[0]->t_addr[entry->remap_data[0]->remap_count] = map->t_addr;
@@ -2845,14 +2830,17 @@ static void __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 size){
 		}
 
 		if(idx == cnt){
-			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remapping should be stopped in here, idx: %u, cnt: %u\n", smp_processor_id(), __func__, idx, cnt);
-			//list_add_tail(&entry->remap_cmd_list, &shrd->ongoing_remap_cmd_list);
-			//break;
+			//shrd_dbg_printk(KERN_ERR, sdev, "%d: %s: remap should be stopped in here, idx: %u, cnt: %u\n", smp_processor_id(), __func__, idx, cnt);
+			list_add_tail(&entry->remap_cmd_list, &shrd->ongoing_remap_cmd_list);
+			break;
 		}
 	}
-	//temp
+/*
 	list_add_tail(&entry->remap_cmd_list, &shrd->ongoing_remap_cmd_list);
-	
+	if(idx != cnt){
+		shrd_dbg_printk(KERN_ERR, sdev, "%d: %s: idx is differed from cnt, idx: %u, cnt: %u\n", smp_processor_id(), __func__, idx, cnt);
+	}
+	*/
 	shrd->rw_log_start_idx = end_idx + 1;
 	if(shrd->rw_log_start_idx >= SHRD_RW_LOG_SIZE_IN_PAGE)
 		shrd->rw_log_start_idx -= SHRD_RW_LOG_SIZE_IN_PAGE;
@@ -3128,6 +3116,7 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		 
 		 //test
+		 	
 		if(sdev->shrd_on && sdev->shrd->in_remap){
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: break because shrd is in remap\n", smp_processor_id(), __func__);
 			break;
@@ -3314,8 +3303,8 @@ spcmd:
 				}
 				else if(req->bio->bi_rw & REQ_SHRD_REMAP){
 					remap_entry = (struct SHRD_REMAP *)req->bio->bi_private;	
-					shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	REMAP_DATA	%u	%u	%u	", 
-						remap_entry->remap_data[0]->t_addr_start, remap_entry->remap_data[0]->t_addr_end, remap_entry->remap_data[0]->remap_count);
+					shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	REMAP_DATA	%u	", 
+						remap_entry->remap_data[0]->remap_count);
 
 					for(i=0; i < SHRD_NUM_MAX_REMAP_ENTRY; i++){
 						shrd_trace_printk(KERN_INFO, sdev, "SHRD_TRACE	REMAP_DATA	T_ADDR %u	O_ADDR	%u	", remap_entry->remap_data[0]->t_addr[i], remap_entry->remap_data[0]->o_addr[i]);
