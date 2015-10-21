@@ -2059,13 +2059,24 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 	This is same as usual prepare procedure in blk_peek_request, but we need to separate this from blk_peek_request
 	because of packing twrite.
 */
-static void scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
+static int scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 
 	int ret;
+
+#if 0
+	//test
+	if(rq->cmd_flags & REQ_FLUSH || rq->cmd_flags & REQ_FUA){
+		if(!rq->bio){
+			blk_start_request(rq);
+			__blk_end_request_all(rq, 0);
+			return -1;
+		}
+	}
+#endif
 	
 	ret = scsi_prep_fn(q, rq);
 	if (ret == BLKPREP_OK) {
-		return;
+		return 0;
 	} else if (ret == BLKPREP_DEFER) {
 		/*
 		 * the request may have been (partially) prepped.
@@ -2083,7 +2094,7 @@ static void scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 		}
 
 		rq = NULL;
-		return;
+		return 0;
 	} else if (ret == BLKPREP_KILL) {
 		rq->cmd_flags |= REQ_QUIET;
 		/*
@@ -2094,8 +2105,9 @@ static void scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 		__blk_end_request_all(rq, -EIO);
 	} else {
 		printk(KERN_ERR "%s: bad return=%d\n", __func__, ret);
-		return;
+		return 0;
 	}
+	return 0;
 }
 
 /*
@@ -2230,11 +2242,11 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 		if(!next->bio){
-			sdev_printk(KERN_ERR, sdev, "%s: bio is NULL\n", __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: bio is NULL\n", __func__);
 			break;
 		}
 		if(next->bio->bi_bdev != shrd->bdev){
-			shrd_dbg_printk(KERN_ERR, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
 			break;
 		}
 
@@ -3179,9 +3191,6 @@ static void scsi_request_fn(struct request_queue *q)
 				//read request, need to check whether need to change the address or not.
 				struct SHRD_TREAD *tread_entry = NULL;
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle read function\n", smp_processor_id(), __func__);
-
-				//test
-				goto spcmd;
 				
 				tread_entry = scsi_shrd_check_read_requests(q, req);
 
@@ -3236,8 +3245,11 @@ static void scsi_request_fn(struct request_queue *q)
 				goto spcmd;
 			}
 spcmd:
-			if (!(req->cmd_flags & REQ_DONTPREP))
-				scsi_shrd_prep_req(q, req);
+			if (!(req->cmd_flags & REQ_DONTPREP)){
+				rtn = scsi_shrd_prep_req(q, req);
+				if(rtn < 0)
+					continue;
+			}
 		}
 #endif
 		if (unlikely(!scsi_device_online(sdev))) {
