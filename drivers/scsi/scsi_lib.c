@@ -1792,7 +1792,7 @@ static void scsi_shrd_bd_init(struct request_queue *q){
 	
 }
 
-u32 scsi_shrd_init(struct request_queue *q){
+u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size, u32 rw_threshold, u32 adaptive_packing){
 
 	struct scsi_device *sdev = q->queuedata;
 	int idx, rtn = 0;
@@ -1811,6 +1811,29 @@ u32 scsi_shrd_init(struct request_queue *q){
 	}
 	
 	memset(sdev->shrd, 0x00, sizeof(struct SHRD));
+
+	//experimental, parameterize some sizes
+	if(remap_threshold > 0)
+		sdev->shrd->remap_threshold = remap_threshold;
+	
+	else 
+		sdev->shrd->remap_threshold =SHRD_RW_REMAP_THRESHOLD_IN_PAGE;
+	
+	if(remap_size > 0)
+		sdev->shrd->remap_size = remap_size;
+	else
+		sdev->shrd->remap_size = SHRD_MAX_REMAP_SIZE_IN_PAGE;
+
+	if(rw_threshold > 0)
+		sdev->shrd->rw_threshold = rw_threshold;
+	else
+		sdev->shrd->rw_threshold = SHRD_RW_THRESHOLD_IN_SECTOR;
+
+	if(adaptive_packing > 0)
+		sdev->shrd->adaptive_packing = adaptive_packing;
+	else
+		sdev->shrd->adaptive_packing = 0;
+	
 	
 	sdev->shrd->shrd_rw_map = (struct SHRD_MAP *)kmalloc(sizeof(struct SHRD_MAP) * SHRD_RW_LOG_SIZE_IN_PAGE, GFP_KERNEL);
 	if(sdev->shrd->shrd_rw_map == NULL){
@@ -2145,7 +2168,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of REQ_WRITE_SAME\n", __func__);
 		goto no_pack;
 	}
-	if(blk_rq_sectors(rq) > SHRD_RW_THRESHOLD_IN_SECTOR){
+	if(blk_rq_sectors(rq) > shrd->rw_threshold){
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of sequential write\n", __func__);
 		goto no_pack;
 	}
@@ -2260,7 +2283,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 
-		if(blk_rq_sectors(next) > SHRD_RW_THRESHOLD_IN_SECTOR){
+		if(blk_rq_sectors(next) > shrd->rw_threshold){
 			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of large next\n", __func__);
 			break;
 		}
@@ -2310,6 +2333,10 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		blk_requeue_request(q, next);
 
 	if(reqs > 0){
+		//adaptive packing need to be handled in here
+		//if reqs < THRESHOLD then
+		//
+		
 		list_add(&rq->queuelist, &twrite_entry->req_list);
 		twrite_entry->nr_requests = ++reqs;
 		twrite_entry->blocks = req_sectors;
@@ -2891,7 +2918,7 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 
 	(new_idx >= start_idx) ? (size = new_idx - start_idx) : (size = SHRD_RW_LOG_SIZE_IN_PAGE - start_idx + new_idx);
 
-	if(size > SHRD_RW_REMAP_THRESHOLD_IN_PAGE){
+	if(size > shrd->remap_threshold){
 		//need to remap
 
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remap is needed, size is %u, start: %u, new: %u\n", smp_processor_id(), __func__, size, start_idx, new_idx);
@@ -2901,8 +2928,8 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 			//to protect reversing of circular q at single remap command.
 		}
 
-		if(size > SHRD_MAX_REMAP_SIZE_IN_PAGE)
-			size = SHRD_MAX_REMAP_SIZE_IN_PAGE;
+		if(size > shrd->remap_size)
+			size = shrd->remap_size;
 
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: actual remap size is %u\n", smp_processor_id(), __func__, size);
 		__scsi_shrd_do_remap_rw_log(q, size);

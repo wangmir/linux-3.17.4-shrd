@@ -90,6 +90,12 @@ struct scsi_device {
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 	unsigned short shrd_on; /* SHRD on/off */
+	//in order to get the parameter for shrd,
+	u32 remap_threshold;
+	u32 remap_size;
+	u32 rw_threshold;
+	u32 adaptive_packing;
+
 	struct SHRD *shrd;
 #endif
 

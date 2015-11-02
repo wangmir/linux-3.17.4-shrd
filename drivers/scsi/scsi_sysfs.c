@@ -670,6 +670,97 @@ static DEVICE_ATTR(eh_timeout, S_IRUGO | S_IWUSR, sdev_show_eh_timeout, sdev_sto
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
 static ssize_t
+sdev_show_shrd_remap_threshold(struct device *dev, struct device_attribute *attr, const char*buf){
+	struct scsi_device *sdev;
+	sdev = to_scsi_device(dev);
+	return snprintf(buf, 20, "%u\n", sdev->remap_threshold);
+}
+
+static ssize_t
+sdev_store_shrd_remap_threshold(struct device *dev, struct device_attribute *attr, const char*buf, size_t count){
+	struct scsi_device *sdev;
+	unsigned int  remap_threshold = 0;
+	int err;
+	sdev = to_scsi_device(dev);
+	err = kstrtouint(buf, 10, &remap_threshold);
+	if(err)
+		return err;
+	sdev->remap_threshold = remap_threshold;
+	printk("sdev_store_shrd_remap_threshold, remap_threshold is %d\n", remap_threshold);
+}
+
+static DEVICE_ATTR(shrd_remap_threshold, S_IRUGO | S_IWUSR, sdev_show_shrd_remap_threshold, sdev_store_shrd_remap_threshold);
+
+static ssize_t
+sdev_show_shrd_remap_size(struct device *dev, struct device_attribute *attr, const char*buf){
+	struct scsi_device *sdev;
+	sdev = to_scsi_device(dev);
+	return snprintf(buf, 20, "%u\n", sdev->remap_size);
+}
+
+static ssize_t
+sdev_store_shrd_remap_size(struct device *dev, struct device_attribute *attr, const char*buf, size_t count){
+	struct scsi_device *sdev;
+	unsigned int  remap_size = 0;
+	int err;
+	sdev = to_scsi_device(dev);
+	err = kstrtouint(buf, 10, &remap_size);
+	if(err)
+		return err;
+	sdev->remap_size = remap_size;
+	printk("sdev_store_shrd_remap_size, remap_size is %d\n", remap_size);
+}
+
+static DEVICE_ATTR(shrd_remap_size, S_IRUGO | S_IWUSR, sdev_show_shrd_remap_size, sdev_store_shrd_remap_size);
+
+
+static ssize_t
+sdev_show_shrd_rw_threshold(struct device *dev, struct device_attribute *attr, const char*buf){
+	struct scsi_device *sdev;
+	sdev = to_scsi_device(dev);
+	return snprintf(buf, 20, "%u\n", sdev->rw_threshold);
+}
+
+static ssize_t
+sdev_store_shrd_rw_threshold(struct device *dev, struct device_attribute *attr, const char*buf, size_t count){
+	struct scsi_device *sdev;
+	unsigned int  rw_threshold = 0;
+	int err;
+	sdev = to_scsi_device(dev);
+	err = kstrtouint(buf, 10, &rw_threshold);
+	if(err)
+		return err;
+	sdev->rw_threshold = rw_threshold;
+	printk("sdev_store_shrd_rw_threshold called, rw_threshold is %d\n", rw_threshold);
+}
+
+static DEVICE_ATTR(shrd_rw_threshold, S_IRUGO | S_IWUSR, sdev_show_shrd_rw_threshold, sdev_store_shrd_rw_threshold);
+
+
+static ssize_t
+sdev_show_shrd_adaptive_packing(struct device *dev, struct device_attribute *attr, const char*buf){
+	struct scsi_device *sdev;
+	sdev = to_scsi_device(dev);
+	return snprintf(buf, 20, "%u\n", sdev->adaptive_packing);
+}
+
+static ssize_t
+sdev_store_shrd_adaptive_packing(struct device *dev, struct device_attribute *attr, const char*buf, size_t count){
+	struct scsi_device *sdev;
+	unsigned int  adaptive_packing = 0;
+	int err;
+	sdev = to_scsi_device(dev);
+	err = kstrtouint(buf, 10, &adaptive_packing);
+	if(err)
+		return err;
+	sdev->adaptive_packing = adaptive_packing;
+	printk("sdev_store_shrd_adaptive_packingcalled, adaptive_packing is %d\n", adaptive_packing);
+}
+
+static DEVICE_ATTR(shrd_adaptive_packing, S_IRUGO | S_IWUSR, sdev_show_shrd_adaptive_packing, sdev_store_shrd_adaptive_packing);
+
+
+static ssize_t
 sdev_show_shrd_enable(struct device *dev, struct device_attribute *attr, char *buf){
 
 	struct scsi_device *sdev;
@@ -694,7 +785,7 @@ sdev_store_shrd_enable(struct device *dev, struct device_attribute *attr,
 	if(shrd_on == 1){
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
-		err = scsi_shrd_init(sdev->request_queue);
+		err = scsi_shrd_init(sdev->request_queue, sdev->remap_threshold, sdev->remap_size, sdev->rw_threshold, sdev->adaptive_packing);
 		if(err){
 			printk("SHRD::shrd init failed\n");
 		}
@@ -1010,6 +1101,10 @@ static struct attribute *scsi_sdev_attrs[] = {
 	&dev_attr_timeout.attr,
 	&dev_attr_eh_timeout.attr,
 #ifdef CONFIG_SCSI_SHRD_TEST0
+	&dev_attr_shrd_remap_threshold.attr,
+	&dev_attr_shrd_remap_size.attr,
+	&dev_attr_shrd_rw_threshold.attr,
+	&dev_attr_shrd_adaptive_packing.attr,
 	&dev_attr_shrd_enable.attr,
 #endif
 	&dev_attr_iocounterbits.attr,

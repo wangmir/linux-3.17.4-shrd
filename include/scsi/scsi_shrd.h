@@ -20,6 +20,7 @@
 #define SHRD_SECTORS_PER_PAGE 8
 
 #define SHRD_RW_THRESHOLD_IN_SECTOR 32 //under 16KB write requests will be gathered as twrite data
+#define SHRD_RW_NUM_ADAPTIVE_PACKING 8
 
 #define SHRD_TWRITE_ENTRIES (32U)
 #define SHRD_REMAP_ENTRIES (32U)  // (experimental)
@@ -56,10 +57,8 @@
 #define SHRD_REMAP_DATA_PAGE 1 // 1page (experimental)
 #define SHRD_MAX_REMAP_DATA_ENTRIES (SHRD_REMAP_DATA_PAGE * SHRD_NUM_MAX_REMAP_ENTRY)
 
-
 #define SHRD_RW_REMAP_THRESHOLD_IN_PAGE (SHRD_RW_LOG_SIZE_IN_PAGE >> 2)
 #define SHRD_MAX_REMAP_SIZE_IN_PAGE (SHRD_RW_REMAP_THRESHOLD_IN_PAGE >> 2)
-#define SHRD_NUM_REMAP_ENTRIES_PER_PERIOD (SHRD_MAX_REMAP_SIZE_IN_PAGE / SHRD_NUM_MAX_REMAP_ENTRY)
 
 #define SHRD_INVALID_LPN 0x7fffffff
 
@@ -179,6 +178,11 @@ struct SHRD_MAP_HEAD{
 };
 
 struct SHRD{	
+
+	u32 remap_threshold;
+	u32 remap_size;
+	u32 rw_threshold;
+	u32 adaptive_packing;
 	
 	//SHRD map table RB tree & list 
 	struct SHRD_MAP_HEAD rw_mapping;
@@ -307,7 +311,7 @@ static inline void shrd_put_subread_entry(struct SHRD *shrd, struct SHRD_SUBREAD
 	list_add_tail(&entry->subread_cmd_list, &shrd->free_subread_cmd_list);
 }
 
-u32 scsi_shrd_init(struct request_queue *q);
+u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size, u32 rw_threshold, u32 adaptive_packing);
 struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr);
 int scsi_shrd_map_insert(struct SHRD_MAP_HEAD *mapping, struct SHRD_MAP *map_entry);
 void scsi_shrd_map_remove(u32 oaddr, struct SHRD_MAP_HEAD *mapping);
