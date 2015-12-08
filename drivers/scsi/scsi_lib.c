@@ -2332,7 +2332,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	if(put_back)
 		blk_requeue_request(q, next);
 
-	if(reqs > 0){
+	//if(reqs > 0){
 		//adaptive packing need to be handled in here
 		//if reqs < THRESHOLD then
 		//
@@ -2341,7 +2341,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		twrite_entry->nr_requests = ++reqs;
 		twrite_entry->blocks = req_sectors;
 		twrite_entry->phys_segments = phys_segments;
-	}
+	//}
+	/*
 	else{
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because there are no requests to pack\n", __func__);
 		shrd_put_twrite_entry(sdev->shrd, twrite_entry);
@@ -2349,7 +2350,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		twrite_entry = NULL;
 		goto no_pack;
 	}
-
+*/
 	if(twrite_entry != NULL){
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d, num blocks %d, num segments %d, num padding %d \n",
 			__func__, twrite_entry->nr_requests, twrite_entry->blocks, twrite_entry->phys_segments, padding);
@@ -2681,6 +2682,8 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 
 	if(end > SHRD_RW_LOG_SIZE_IN_PAGE){
 		//it should not be happen because it should be split at the prep section
+		shrd_dbg_printk(KERN_ERR, sdev, "%s: end is larger than SHRD_RW_LOG_SIZE_IN_PAGE, shrd->rw_log_new_idx: %u, header->t_addr_start: %u, header->io_count: %u, sectors: %u\n",
+			__func__, shrd->rw_log_new_idx, header->t_addr_start, header->io_count, sectors);
 		BUG();
 	}
 	
