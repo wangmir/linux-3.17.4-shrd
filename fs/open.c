@@ -257,10 +257,15 @@ int do_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	 * We can only allow pure fallocate on append only files
 	 */
 	if ((mode & ~FALLOC_FL_KEEP_SIZE) && IS_APPEND(inode))
+	{
+		printk("fallocate failed because of append mode: %d, IS_APPEND: %d\n", mode, IS_APPEND(inode));
 		return -EPERM;
+	}
 
-	if (IS_IMMUTABLE(inode))
+	if (IS_IMMUTABLE(inode)){
+		printk("fallocate failed because of immutable\n");
 		return -EPERM;
+	}
 
 	/*
 	 * We cannot allow any fallocate operation on an active swapfile
@@ -295,6 +300,11 @@ int do_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 
 	sb_start_write(inode->i_sb);
 	ret = file->f_op->fallocate(file, mode, offset, len);
+
+	if(ret == -1){
+		printk("fallocate failed because of filesystem specific things\n");
+	}	
+
 	sb_end_write(inode->i_sb);
 	return ret;
 }

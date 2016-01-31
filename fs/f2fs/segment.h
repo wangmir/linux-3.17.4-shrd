@@ -443,7 +443,7 @@ static inline bool has_not_enough_free_secs(struct f2fs_sb_info *sbi, int freed)
 		return false;
 
 	return (free_sections(sbi) + freed) <= (node_secs + 2 * dent_secs +
-						reserved_sections(sbi));
+						overprovision_sections(sbi));
 }
 
 static inline bool excess_prefree_segs(struct f2fs_sb_info *sbi)

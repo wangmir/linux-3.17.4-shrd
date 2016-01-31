@@ -1688,6 +1688,32 @@ static void scsi_done(struct scsi_cmnd *cmd)
 //SHRD component
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
+struct SHRD_MAP * scsi_shrd_read_map_search(struct rb_root *root, u32 addr){
+
+	struct rb_node * node = root->rb_node;
+	u32 cnt = 0;
+
+
+	while (node){
+		struct SHRD_MAP *map_entry  = container_of(node, struct SHRD_MAP, node);
+		int result = addr - map_entry->o_addr;
+		
+		cnt++;
+
+		if(result < 0)
+			node = node->rb_left;
+		else if(result > 0)
+			node = node->rb_right;
+		else{
+			printk("map_hit, cnt:%u\n", cnt);
+			return map_entry;
+		}
+	}
+	printk("map_miss, cnt:%u\n", cnt);
+	return NULL;
+}
+
+
 struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr){
 
 	struct rb_node * node = root->rb_node;
@@ -1700,11 +1726,13 @@ struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr){
 			node = node->rb_left;
 		else if(result > 0)
 			node = node->rb_right;
-		else
+		else{
 			return map_entry;
+		}
 	}
 	return NULL;
 }
+
 
 int scsi_shrd_map_insert(struct SHRD_MAP_HEAD *mapping, struct SHRD_MAP *map_entry){
 
@@ -2086,10 +2114,11 @@ static int scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 
 	int ret;
 
-#if 0
+#if 1
 	//test
 	if(rq->cmd_flags & REQ_FLUSH || rq->cmd_flags & REQ_FUA){
 		if(!rq->bio){
+			printk("%s: directly complete FLUSH and FUA at SHRD\n", __func__);
 			blk_start_request(rq);
 			__blk_end_request_all(rq, 0);
 			return -1;
@@ -2260,40 +2289,40 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		next = blk_fetch_request(q); //we need to start the request in order to get next request
 		
 		if(!next){
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of noreq\n", __func__);
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of noreq\n", __func__);
 			put_back = false;
 			break;
 		}
 		if(!next->bio){
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: bio is NULL\n", __func__);
+			sdev_printk(KERN_INFO, sdev, "%s: bio is NULL\n", __func__);
 			break;
 		}
 		if(next->bio->bi_bdev != shrd->bdev){
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
+			sdev_printk(KERN_INFO, sdev, "%s: next->bio->bi_bdev is not same as shrd->bdev\n", __func__);
 			break;
 		}
 
 		if(next->cmd_flags & REQ_DISCARD || next->cmd_flags & REQ_FLUSH || next->cmd_flags & REQ_FUA){
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush, fua\n", __func__);
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush, fua\n", __func__);
 			break;
 		}
 
 		if(rq_data_dir(cur) != rq_data_dir(next)){
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of read request\n", __func__);
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of read request\n", __func__);
 			break;
 		}
 
 		if(blk_rq_sectors(next) > shrd->rw_threshold){
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of large next\n", __func__);
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of large next\n", __func__);
 			break;
 		}
 		
 		if(blk_rq_sectors(next) < SHRD_SECTORS_PER_PAGE){ //under 4KB write is not the common write situation.
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of tiny next requests\n", __func__);
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of tiny next requests\n", __func__);
 			break;
 		}
 		if(blk_rq_pos(next) < 4096){
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack beacuse it is lower block\n", __func__);
+			sdev_printk(KERN_INFO, sdev, "%s: nopack beacuse it is lower block\n", __func__);
 			break;
 		}
 
@@ -2302,7 +2331,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		if(req_sectors > max_packed_rw){
 			req_sectors -= blk_rq_sectors(next);
 			phys_segments -= next->nr_phys_segments;
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
+			sdev_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
 			break;
 		}
 
@@ -2311,7 +2340,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			//not aligned, need to pad
 			if(req_sectors + SHRD_SECTORS_PER_PAGE > max_packed_rw){
 				req_sectors -= blk_rq_sectors(next);
-				shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
+				sdev_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
 				break;
 			}
 			else{
@@ -2332,7 +2361,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	if(put_back)
 		blk_requeue_request(q, next);
 
-	//if(reqs > 0){
+	if(shrd->rw_threshold >= 1024 || reqs > 0){
 		//adaptive packing need to be handled in here
 		//if reqs < THRESHOLD then
 		//
@@ -2341,8 +2370,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		twrite_entry->nr_requests = ++reqs;
 		twrite_entry->blocks = req_sectors;
 		twrite_entry->phys_segments = phys_segments;
-	//}
-	/*
+	}
+	
 	else{
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because there are no requests to pack\n", __func__);
 		shrd_put_twrite_entry(sdev->shrd, twrite_entry);
@@ -2350,7 +2379,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		twrite_entry = NULL;
 		goto no_pack;
 	}
-*/
+
 	if(twrite_entry != NULL){
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d, num blocks %d, num segments %d, num padding %d \n",
 			__func__, twrite_entry->nr_requests, twrite_entry->blocks, twrite_entry->phys_segments, padding);
@@ -3073,7 +3102,7 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 	if(blk_rq_sectors(rq) == SHRD_SECTORS_PER_PAGE){
 		struct SHRD_SUBREAD *subread = NULL;
 		struct SHRD_MAP *map = NULL;
-		map = scsi_shrd_map_search(&shrd->rw_mapping.rbtree_root, (u32)(blk_rq_pos(rq) / SHRD_SECTORS_PER_PAGE));
+		map = scsi_shrd_read_map_search(&shrd->rw_mapping.rbtree_root, (u32)(blk_rq_pos(rq) / SHRD_SECTORS_PER_PAGE));
 
 		if(map == NULL)
 			return NULL;
