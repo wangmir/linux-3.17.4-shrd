@@ -2325,6 +2325,9 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			sdev_printk(KERN_INFO, sdev, "%s: nopack beacuse it is lower block\n", __func__);
 			break;
 		}
+		if(blk_rq_pos(next) > SHRD_LOG_START_IN_PAGE){
+			sdev_printk(KERN_INFO, sdev, "%s: ERROR: spcmd is being packed", __func__);
+		}
 
 		req_sectors += blk_rq_sectors(next);
 		phys_segments += next->nr_phys_segments;

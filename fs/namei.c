@@ -3261,6 +3261,7 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 		filp = path_openat(dfd, pathname, &nd, op, flags);
 	if (unlikely(filp == ERR_PTR(-ESTALE)))
 		filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_REVAL);
+	
 	return filp;
 }
 

@@ -32,6 +32,8 @@
 #include <linux/dnotify.h>
 #include <linux/compat.h>
 
+#include <linux/blkdev.h>
+
 #include "internal.h"
 
 int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
@@ -993,8 +995,24 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 		} else {
 			fsnotify_open(f);
 			fd_install(fd, f);
+//trace inode number corresponded for filename
+#if 1
+			if(f != NULL){
+				if(f->f_path.dentry != NULL && f->f_inode != NULL){
+					struct inode *inode = f->f_inode;
+					if(S_ISBLK(inode->i_mode) && inode->i_bdev){
+						struct block_device *bdev = inode->i_bdev;
+						if(bdev->bd_queue && bdev->bd_queue->semantic_trace_on)
+							printk("TRACE_NAME,%s,%lu\n", (char*)(f->f_path.dentry->d_name.name), f->f_inode->i_ino);
+					}
+
+				}
+			}
+#endif
 		}
+		
 	}
+	
 	putname(tmp);
 	return fd;
 }

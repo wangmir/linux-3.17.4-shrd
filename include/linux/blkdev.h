@@ -421,6 +421,11 @@ struct request_queue {
 
 	unsigned int		nr_sorted;
 	unsigned int		in_flight[2];
+//for semantic trace
+#if 1
+	unsigned int		semantic_trace_on;
+#endif
+	
 	/*
 	 * Number of active block driver functions for which blk_drain_queue()
 	 * must wait. Must be incremented around functions that unlock the

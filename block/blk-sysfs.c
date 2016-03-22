@@ -285,6 +285,41 @@ queue_rq_affinity_store(struct request_queue *q, const char *page, size_t count)
 	return ret;
 }
 
+//trace on/off
+#if 1
+
+static ssize_t queue_semantic_trace_show(struct request_queue *q, char *page)
+{
+	return queue_var_show(q->semantic_trace_on, page);
+}
+
+static ssize_t
+queue_semantic_trace_store(struct request_queue *q, const char *page, size_t count)
+{
+	ssize_t ret = -EINVAL;
+	unsigned int val;
+
+	ret = queue_var_store(&val, page, count);
+	if (ret <= 0)
+		return ret;
+
+	spin_lock_irq(q->queue_lock);
+
+	q->semantic_trace_on = 1;
+	
+	spin_unlock_irq(q->queue_lock);
+	return ret;
+}
+
+static struct queue_sysfs_entry queue_semantic_trace_entry = {
+	.attr = {.name = "semantic_trace", .mode = S_IRUGO | S_IWUSR },
+	.show = queue_semantic_trace_show,
+	.store = queue_semantic_trace_store,
+};
+
+#endif
+
+
 static struct queue_sysfs_entry queue_requests_entry = {
 	.attr = {.name = "nr_requests", .mode = S_IRUGO | S_IWUSR },
 	.show = queue_requests_show,
@@ -427,6 +462,9 @@ static struct attribute *default_attrs[] = {
 	&queue_rq_affinity_entry.attr,
 	&queue_iostats_entry.attr,
 	&queue_random_entry.attr,
+#if 1
+	&queue_semantic_trace_entry.attr,
+#endif
 	NULL,
 };
 

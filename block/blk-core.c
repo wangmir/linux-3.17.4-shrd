@@ -33,6 +33,8 @@
 #include <linux/ratelimit.h>
 #include <linux/pm_runtime.h>
 
+#include <linux/fs.h>
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/block.h>
 
@@ -2239,6 +2241,52 @@ struct request *blk_peek_request(struct request_queue *q)
 			 * not be passed by new incoming requests
 			 */
 			rq->cmd_flags |= REQ_STARTED;
+			
+//to get file sematic (file or not, meta or data, inode number (filename))
+#if 1
+		if(q->semantic_trace_on){
+			if(rq->bio && rq_data_dir(rq)){
+				//only write command
+
+				struct bio *bio = rq->bio;
+				struct page *page = bio->bi_io_vec->bv_page;
+				struct address_space *mapping = page->mapping;
+
+				if(mapping){
+					if(PageAnon(page)){
+						//anonymous page
+						printk("TRACE_WRITE,%u,%u,ANON\n", blk_rq_pos(rq), blk_rq_sectors(rq));
+					}
+					else{
+						//storage_backed page
+						struct inode *inode = mapping->host;
+						if(inode){
+							u32 ino = inode->i_ino;
+							if(S_ISDIR(inode->i_mode)){
+								//dentry
+								printk("TRACE_WRITE,%u,%u,DENTRY,%u\n", blk_rq_pos(rq), blk_rq_sectors(rq), ino);
+							}
+							else if(rq->cmd_flags & REQ_META){
+								//meta data		
+								printk("TRACE_WRITE,%u,%u,META,%u\n", blk_rq_pos(rq), blk_rq_sectors(rq), ino);
+							}
+							else{
+								printk("TRACE_WRITE,%u,%u,DATA,%u\n", blk_rq_pos(rq), blk_rq_sectors(rq), ino);
+							}
+							
+						}
+						else
+							printk("TRACE_WRITE,%u,%u,NO_INODE\n", blk_rq_pos(rq), blk_rq_sectors(rq));
+					}
+				}
+				else{
+					//there are no information about mapping, is it correct?
+					printk("TRACE_WRITE,%u,%u,NO_MAPPING\n", blk_rq_pos(rq), blk_rq_sectors(rq));
+				}
+			}
+		}
+
+#endif			
 			trace_block_rq_issue(q, rq);
 		}
 
