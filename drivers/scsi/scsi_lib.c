@@ -2297,6 +2297,10 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 
+		if(blk_rq_pos(next) > SHRD_RW_LOG_START_IN_PAGE){
+			shrd_dbg_printk(KERN_ERR, sdev, "%s: ERR: SPCMD will be repacked, pos: %u\n", __func__, blk_rq_pos(next));
+		}
+
 		req_sectors += blk_rq_sectors(next);
 		phys_segments += next->nr_phys_segments;
 		if(req_sectors > max_packed_rw){
