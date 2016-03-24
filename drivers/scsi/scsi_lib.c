@@ -3182,6 +3182,7 @@ static void scsi_request_fn(struct request_queue *q)
 			break;
 		}
 
+		
 #ifdef CONFIG_SCSI_SHRD_TEST0
 
 		if(sdev->shrd_on){
@@ -3198,11 +3199,16 @@ static void scsi_request_fn(struct request_queue *q)
 			}
 		}
 		else{
-			req = blk_peek_request(q);		
+			req = blk_peek_request(q);	
+			if(!req)
+				break;
 		}
 
 #else
-		req = blk_peek_request(q);		
+		req = blk_peek_request(q);
+		if(!req)
+			break;
+
 #endif
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
