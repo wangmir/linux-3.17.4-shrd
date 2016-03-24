@@ -1116,12 +1116,6 @@ static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb,
 	sdb->table.nents = count;
 	sdb->length = blk_rq_bytes(req);
 
-#ifdef CONFIG_SCSI_SHRD_TEST0
-	if(((struct scsi_device *)req->q->queuedata)->shrd_on)
-		shrd_dbg_printk(KERN_INFO, (struct scsi_device *)req->q->queuedata, "%s: nents %d, sectors %d\n", __func__, count, blk_rq_sectors(req));
-#endif
-
-
 	return BLKPREP_OK;
 }
 
@@ -1779,7 +1773,22 @@ static void scsi_shrd_bd_init(struct request_queue *q){
 
 	
 	//independent queue for spcmd.
+
+#if 0
 	shrd->sp_queue = blk_init_queue(NULL, NULL);
+	//blk_queue_prep_rq(q, scsi_prep_fn);
+	//blk_queue_unprep_rq(q, scsi_unprep_fn);
+
+	__scsi_init_queue(sdev->host, shrd->sp_queue);
+	
+	blk_queue_softirq_done(q, scsi_softirq_done);
+	blk_queue_rq_timed_out(q, scsi_times_out);
+	blk_queue_lld_busy(q, scsi_lld_busy);
+
+#endif
+	
+	shrd->sp_queue = scsi_alloc_queue(sdev);
+	blk_queue_prep_rq(shrd->sp_queue, NULL);
 
 /*
 	if(!bdget(shrd->bdev->bd_dev)){
@@ -2311,7 +2320,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 
-		if(blk_rq_pos(next) > SHRD_RW_LOG_START_IN_PAGE){
+		if(blk_rq_pos(next) >= (SHRD_RW_LOG_START_IN_PAGE * SHRD_SECTORS_PER_PAGE)){
 			shrd_dbg_printk(KERN_ERR, sdev, "%s: ERR: SPCMD will be repacked, pos: %u\n", __func__, blk_rq_pos(next));
 		}
 
@@ -3482,7 +3491,19 @@ spcmd:
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: not ready\n", __func__);
 	
 	spin_lock_irq(q->queue_lock);
-	blk_requeue_request(q, req);
+
+	//spcmd needs to requeue into shrd->sp_queue rather than q.
+	if(req->bio){
+		if((req->bio->bi_rw & REQ_SHRD_REMAP) || (req->bio->bi_rw & REQ_SHRD_TWRITE_HDR) 
+			|| (req->bio->bi_rw & REQ_SHRD_TWRITE_DAT) || (req->bio->bi_rw & REQ_SHRD_SUBREAD)){
+			blk_requeue_request(sdev->shrd->sp_queue, req);
+		}
+		else
+			blk_requeue_request(q, req);
+	}
+	else
+		blk_requeue_request(q, req);
+	
 	atomic_dec(&sdev->device_busy);
 out_delay:
 	if(sdev->shrd_on)
