@@ -236,6 +236,9 @@ struct SHRD{
 	struct block_device *bdev;
 	struct gendisk *rq_disk;
 
+	//request queue for special command
+	struct request_queue *sp_queue;
+
 	//for debug
 	u32 twrite_hdr_cnt;
 	u32 twrite_data_cnt;

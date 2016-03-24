@@ -1776,6 +1776,11 @@ static void scsi_shrd_bd_init(struct request_queue *q){
 		BUG();
 		return;
 	}
+
+	
+	//independent queue for spcmd.
+	shrd->sp_queue = blk_init_queue(NULL, NULL);
+
 /*
 	if(!bdget(shrd->bdev->bd_dev)){
 		sdev_printk(KERN_ERR, sdev, "%s: bdget error\n", __func__);
@@ -2048,6 +2053,15 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, st
 static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 
 	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+	struct scsi_device *sdev =  q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
+
+	if(!shrd){
+		printk("ERR: there are no shrd struct to handle.");
+	}
+	else{
+		q = shrd->sp_queue;
+	}
 
 	//printk("%s: start submit_bio\n", __func__);
 
@@ -3168,12 +3182,28 @@ static void scsi_request_fn(struct request_queue *q)
 			break;
 		}
 
-		req = blk_peek_request(q);		
-		if (!req){
-			if(sdev->shrd_on)
-				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: break because req NULL on peek\n", smp_processor_id(), __func__);
-			break;
+#ifdef CONFIG_SCSI_SHRD_TEST0
+
+		if(sdev->shrd_on){
+			//check sp_queue first (spcmd always should be treated firstly)
+			req = blk_peek_request(sdev->shrd->sp_queue);
+			if(!req){
+				//if there are no spcmd to handle, then handle normal requests
+				req = blk_peek_request(q);
+				if (!req){
+					if(sdev->shrd_on)
+						shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: break because req NULL on peek\n", smp_processor_id(), __func__);
+					break;
+				}	
+			}
 		}
+		else{
+			req = blk_peek_request(q);		
+		}
+
+#else
+		req = blk_peek_request(q);		
+#endif
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
