@@ -1972,6 +1972,8 @@ u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size,
 	INIT_LIST_HEAD(&sdev->shrd->rw_mapping.list_root);
 	//INIT_LIST_HEAD(&sdev->shrd->jn_mapping.list_root);
 
+	INIT_LIST_HEAD(&sdev->shrd->spcmd_request_list);
+
 	sdev->shrd->in_remap = 0;
 	scsi_shrd_bd_init(q);
 
@@ -1983,9 +1985,6 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, st
 	
 	const bool sync = !!(bio->bi_rw & REQ_SYNC);
 	int rw_flags, where = ELEVATOR_INSERT_FRONT;
-	//struct request *req;
-
-	//printk("%s: start blk_queue_bio\n", __func__);
 
 	blk_queue_bounce(q, &bio);
 
@@ -2031,12 +2030,8 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, st
 	if (test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags))
 		req->cpu = raw_smp_processor_id();
 
-	//printk("%s: above blk_account_io_start\n", __func__);
-
 	blk_account_io_start(req, true); 
 	__elv_add_request(q, req, where);
-
-	//printk("%s: end blk_queue_bio\n", __func__);
 
 }
 
@@ -2048,8 +2043,10 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, st
 static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 
 	struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+	struct scsi_device *sdev = q->queuedata;
+	struct SHRD *shrd = sdev->shrd;
 
-	//printk("%s: start submit_bio\n", __func__);
+	shrd_dbg_printk(KERN_INFO, sdev, "%s: start submit_bio\n", __func__);
 
 	bio->bi_rw |= rw;
 
@@ -2074,6 +2071,13 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 	}
 
 	scsi_shrd_blk_queue_bio(q, bio, req);
+
+	if(!shrd){
+		shrd_dbg_printk(KERN_ERR, sdev, "%s: ERR: shrd structure not found\n",__func__);
+		BUG();
+	}
+
+	list_add_tail(&req->spcmd_list, &shrd->spcmd_request_list);
 }
 
 /*
@@ -3142,17 +3146,19 @@ static void scsi_request_fn(struct request_queue *q)
 	struct scsi_device *sdev = q->queuedata;
 	struct Scsi_Host *shost;
 	struct scsi_cmnd *cmd;
-	struct request *req;
+	struct request *req = NULL;
 	
 	/*
 	 * To start with, we keep looping until the queue is empty, or until
 	 * the host is no longer able to accept any more requests.
 	 */
 	shost = sdev->host;
-	
+
+#ifdef CONFIG_SCSI_SHRD_TEST0	
 	if(sdev->shrd_on)
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: active request fn is %d\n", smp_processor_id(), __func__, q->request_fn_active);
-	
+#endif
+
 	for (;;) {
 		int rtn;
 		/*
@@ -3160,20 +3166,39 @@ static void scsi_request_fn(struct request_queue *q)
 		 * that the request is fully prepared even if we cannot
 		 * accept it.
 		 */
-		 
-		 //test
-		 	
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
+
+		//test
 		if(sdev->shrd_on && sdev->shrd->in_remap){
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: break because shrd is in remap\n", smp_processor_id(), __func__);
 			break;
 		}
-
-		req = blk_peek_request(q);		
+		if(sdev->shrd_on){
+			
+			list_for_each_entry(req, &sdev->shrd->spcmd_request_list, spcmd_list){
+				if(!list_empty(&req->queuelist)){
+					break;
+				}
+			}
+			if(!req || list_empty(&req->queuelist)){
+				req = NULL;
+				req = blk_peek_request(q);
+			}
+		}
+		else
+			req = blk_peek_request(q);		
+		
 		if (!req){
 			if(sdev->shrd_on)
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: break because req NULL on peek\n", smp_processor_id(), __func__);
 			break;
 		}
+#else
+		req = blk_peek_request(q);
+		if(!req)
+			break;
+#endif
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
@@ -3294,8 +3319,11 @@ spcmd:
 		}
 
 		if (!scsi_dev_queue_ready(q, sdev)){		
+			
+#ifdef CONFIG_SCSI_SHRD_TEST0			
 			if(sdev->shrd_on)
 				shrd_dbg_printk(KERN_INFO, sdev, "%s: break because dev queue is not ready\n", __func__);
+#endif
 			break;
 		}
 		/*
@@ -3304,6 +3332,7 @@ spcmd:
 		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
 			blk_start_request(req);
 
+#ifdef CONFIG_SCSI_SHRD_TEST0
 		if(sdev->shrd_on){
 			if(req->bio){
 				if(req->bio->bi_rw & REQ_SHRD_TWRITE_HDR){
@@ -3325,6 +3354,7 @@ spcmd:
 				}
 			}
 		}
+#endif
 
 #ifdef CONFIG_SCSI_SHRD_TRACE_PRINTK
 		//tracing region for the simulator
@@ -3417,9 +3447,12 @@ spcmd:
 			goto out_delay;
 		}
 		
+#ifdef CONFIG_SCSI_SHRD_TEST0		
 		if(sdev->shrd_on){
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: dispatch complete,req pos: %d, sectors: %d\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
 		}
+#endif
+
 		spin_lock_irq(q->queue_lock);
 	}
 
@@ -3427,9 +3460,10 @@ spcmd:
 
  host_not_ready:
  	
+#ifdef CONFIG_SCSI_SHRD_TEST0	
  	if(sdev->shrd_on)
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: host not ready\n", __func__);
-		
+#endif		
 	if (scsi_target(sdev)->can_queue > 0)
 		atomic_dec(&scsi_target(sdev)->target_busy);
  not_ready:
@@ -3441,17 +3475,21 @@ spcmd:
 	 * cases (host limits or settings) should run the queue at some
 	 * later time.
 	 */
-
+#ifdef CONFIG_SCSI_SHRD_TEST0
 	if(sdev->shrd_on)
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: not ready\n", __func__);
-	
+#endif
+
 	spin_lock_irq(q->queue_lock);
 	blk_requeue_request(q, req);
 	atomic_dec(&sdev->device_busy);
 out_delay:
+
+#ifdef CONFIG_SCSI_SHRD_TEST0
 	if(sdev->shrd_on)
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: out delay\n", __func__);
-	
+#endif
+
 	if (!atomic_read(&sdev->device_busy) && !scsi_device_blocked(sdev))
 		blk_delay_queue(q, SCSI_QUEUE_DELAY);
 }
