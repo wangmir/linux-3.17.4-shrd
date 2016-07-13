@@ -2077,7 +2077,15 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 		BUG();
 	}
 
-	list_add_tail(&req->spcmd_list, &shrd->spcmd_request_list);
+	list_add(&req->spcmd_list, &shrd->spcmd_request_list);
+/*
+	if(bio && bio->bi_rw & REQ_SHRD_TWRITE_DAT)
+		list_add(&req->spcmd_list, &shrd->spcmd_request_list);
+	else
+		list_add_tail(&req->spcmd_list, &shrd->spcmd_request_list);
+*/
+
+	
 }
 
 /*
@@ -2203,7 +2211,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		}
 		else{
 			//we need to move the log start ptr into log front
-			if(shrd->rw_log_start_idx >= SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR){
+			if(shrd->rw_log_start_idx >= SHRD_MAX_TWRITE_IO_SIZE_IN_PAGE){
 				shrd->rw_log_new_idx = 0; //goto log end because enoulgh slot is presented.
 			}
 			else{
@@ -2301,7 +2309,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 
-		if(blk_rq_pos(next) > SHRD_RW_LOG_START_IN_PAGE){
+		if(blk_rq_pos(next) > SHRD_RW_LOG_START_IN_PAGE * SHRD_SECTORS_PER_PAGE){
 			shrd_dbg_printk(KERN_ERR, sdev, "%s: ERR: SPCMD will be repacked, pos: %u\n", __func__, blk_rq_pos(next));
 		}
 
@@ -2407,6 +2415,10 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 
 		//error handling check: should we need to wait for the twrite header completion before send twrite data?
 		spin_lock_irqsave(q->queue_lock, flags);
+
+		//delete this request from spcmd queue
+		list_del(&twrite_entry->header_rq->spcmd_list);
+		
 		scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data, twrite_entry->data_rq); 
 		spin_unlock_irqrestore(q->queue_lock, flags);
 	}
@@ -2417,7 +2429,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		twrite_entry = (struct SHRD_TWRITE *)bio->bi_private;
 		BUG_ON(!twrite_entry);
 
-		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: twrite data completion: twrite block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__, twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: twrite data completion: twrite: %llx, twrite block: %d, nr_request: %d, phys_segment: %d\n", smp_processor_id(), __func__,(u64)twrite_entry,  twrite_entry->blocks, twrite_entry->nr_requests, twrite_entry->phys_segments);
 
 		//spin_lock_irqsave(shrd->bdev->bd_queue->queue_lock, flags);
 		list_for_each_entry_safe(prq, tmp, &twrite_entry->req_list, queuelist){
@@ -2443,6 +2455,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		}
 		//spin_unlock_irqrestore(shrd->bdev->bd_queue->queue_lock, flags);
 		spin_lock_irqsave(q->queue_lock,flags);
+		list_del(&twrite_entry->data_rq->spcmd_list);
 		shrd_put_twrite_entry(shrd, twrite_entry);
 		spin_unlock_irqrestore(q->queue_lock, flags);
 	}
@@ -2464,11 +2477,13 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 
 		for(i = 0; i < remap_data->remap_count; i++){
 			scsi_shrd_map_remove(remap_data->o_addr[i], &shrd->rw_mapping);
+			//need map invalidation
 		}
 		
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remap complete, start %u, new %u, SHRD_RW_LOG_START_IN_PAGE %u\n", smp_processor_id(), __func__, 
 			shrd->rw_log_start_idx, shrd->rw_log_new_idx, SHRD_RW_LOG_START_IN_PAGE);
 
+		list_del(&remap_entry->req->spcmd_list);
 		shrd_put_remap_entry(shrd, remap_entry);
 		shrd->in_remap = 0;
 		
@@ -2484,6 +2499,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: subread completion: subread_entry: %llx, tread_entry: %llx, orig request addr: %u, size: %u\n",
 			smp_processor_id(), __func__, (u64)subread_entry, (u64)tread_entry, (u32)blk_rq_pos(tread_entry->orig_req), blk_rq_sectors(tread_entry->orig_req));
 		list_del(&subread_entry->subread_cmd_list);
+		list_del(&subread_entry->req->spcmd_list);
 		shrd_put_subread_entry(shrd, subread_entry);
 		tread_entry->subread_cnt--;
 		
@@ -2657,6 +2673,7 @@ static void scsi_shrd_make_twrite_bios(struct request_queue *q, struct SHRD_TWRI
 
 	shrd_dbg_printk(KERN_INFO, sdev, "%s: bio make complete, twrite_entry %llx, header bio %llx, bi_sector %u, bi_size %d, data bio %llx, bi_sector %u, bi_size %u\n", __func__
 		, (u64)twrite_entry, (u64)header, (u32)header->bi_iter.bi_sector, (u32)header->bi_iter.bi_size, (u64)data, (u32)data->bi_iter.bi_sector, (u32)data->bi_iter.bi_size);
+
 }
 
 /*
@@ -3126,6 +3143,23 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 	return tread_entry;
 }
 
+struct request * scsi_shrd_peek_request(struct request_queue *q){
+
+	struct scsi_device *sdev = q->queuedata;
+	struct request* req = NULL;
+			
+	list_for_each_entry(req, &sdev->shrd->spcmd_request_list, spcmd_list){
+		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SPCMD debug, req pos: %u, sectors: %u, req: %llx\n",
+			smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req), (u64)req);
+		if(!list_empty(&req->queuelist)){
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SPCMD handling start, req pos: %u, sectors: %u, req: %llx\n",
+				smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req), (u64)req);
+			return req;
+		}
+	}
+	return blk_peek_request(q);	
+}
+
 #endif
 
 /*
@@ -3168,26 +3202,16 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
-
+		
 		//test
 		if(sdev->shrd_on && sdev->shrd->in_remap){
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: break because shrd is in remap\n", smp_processor_id(), __func__);
 			break;
 		}
-		if(sdev->shrd_on){
-			
-			list_for_each_entry(req, &sdev->shrd->spcmd_request_list, spcmd_list){
-				if(!list_empty(&req->queuelist)){
-					break;
-				}
-			}
-			if(!req || list_empty(&req->queuelist)){
-				req = NULL;
-				req = blk_peek_request(q);
-			}
-		}
+		if(sdev->shrd_on)
+			req = scsi_shrd_peek_request(q);
 		else
-			req = blk_peek_request(q);		
+			req = blk_peek_request(q);
 		
 		if (!req){
 			if(sdev->shrd_on)
@@ -3209,7 +3233,7 @@ static void scsi_request_fn(struct request_queue *q)
 
 			BUG_ON(!sdev->shrd);
 
-			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req));
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u, req:%llx\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req), (u64)req);
 			
 #if 0			
 			if(req->bio){
