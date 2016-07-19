@@ -49,6 +49,7 @@
 #define SHRD_MIN_RW_LOGGING_IO_SIZE_IN_PAGE 128
 
 #define SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR 1024
+#define SHRD_MAX_TWRITE_IO_SIZE_IN_PAGE (SHRD_MAX_TWRITE_IO_SIZE_IN_SECTOR / SHRD_SECTORS_PER_PAGE)
 
 #define SHRD_NUM_MAX_TWRITE_ENTRY 128
 #define SHRD_NUM_MAX_REMAP_ENTRY 511
@@ -208,6 +209,15 @@ struct SHRD{
 
 	struct list_head ongoing_remap_cmd_list; //because the remap can be plural, we need to maintain the list of remap, and send the next remap cmd after former's end
 	struct list_head ongoing_tread_cmd_list; //if tread is ongoing, then remap should be delayed until complete of tread
+
+/*
+	pseudo request queue for spcmd (twrite hdr, data, remap, subread).
+	
+	they should be treated firstly than normal request, so we maintain separate list for the sp request.
+	notice that the list_head in the request structure is not the queuelist, but a additional list_head structure called spcmd_list,
+	because the request also should be in the request_queue of the device.
+*/
+	struct list_head spcmd_request_list;
 
 	//for each index indicator for write and remap, should acquire lock to handle each entries.
 	//idx represents the index within log area, thus plz use this with SHRD_RW_LOG_START_IN_PAGE when calculate exact address.
