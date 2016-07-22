@@ -1776,19 +1776,6 @@ static void scsi_shrd_bd_init(struct request_queue *q){
 		BUG();
 		return;
 	}
-/*
-	if(!bdget(shrd->bdev->bd_dev)){
-		sdev_printk(KERN_ERR, sdev, "%s: bdget error\n", __func__);
-		BUG();
-		return;
-	}
-
-	if(blkdev_get(shrd->bdev, FMODE_READ | FMODE_WRITE | FMODE_EXCL, shrd)){
-		sdev_printk(KERN_ERR, sdev, "%s: blkdev_get error\n", __func__);
-		bdput(shrd->bdev);
-		BUG();
-		return;
-	}*/
 	
 }
 
@@ -2078,14 +2065,6 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 	}
 
 	list_add(&req->spcmd_list, &shrd->spcmd_request_list);
-/*
-	if(bio && bio->bi_rw & REQ_SHRD_TWRITE_DAT)
-		list_add(&req->spcmd_list, &shrd->spcmd_request_list);
-	else
-		list_add_tail(&req->spcmd_list, &shrd->spcmd_request_list);
-*/
-
-	
 }
 
 /*
@@ -2345,33 +2324,47 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		
 	}while(1);
 
+	/*
+		In here, packing is in progress, and twrite_entry is allocated.
+		So, if we need to cancel the packing, we need to requeue all the request and return the twrite_entry
+	*/
+
 	if(put_back)
 		blk_requeue_request(q, next);
 
-	//if(reqs > 0){
-		//adaptive packing need to be handled in here
-		//if reqs < THRESHOLD then
-		//
-		
-		list_add(&rq->queuelist, &twrite_entry->req_list);
-		twrite_entry->nr_requests = ++reqs;
-		twrite_entry->blocks = req_sectors;
-		twrite_entry->phys_segments = phys_segments;
-	//}
-	/*
-	else{
-		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because there are no requests to pack\n", __func__);
-		shrd_put_twrite_entry(sdev->shrd, twrite_entry);
-		blk_requeue_request(q, rq);
-		twrite_entry = NULL;
-		goto no_pack;
-	}
-*/
-	if(twrite_entry != NULL){
+	//reqs does not include the first request itself
+	if(reqs + 1 > SHRD_MIN_PACKING_THRESHOLD){
+		//packing success
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d, num blocks %d, num segments %d, num padding %d \n",
-			__func__, twrite_entry->nr_requests, twrite_entry->blocks, twrite_entry->phys_segments, padding);
-		return twrite_entry;
+			__func__, twrite_entry->nr_requests, twrite_entry->blocks, twrite_entry->phys_segments, padding);		
 	}
+	else{
+		//packing ratio is low, do we need to retry?
+		if(shrd->packing_in_trial < SHRD_NUM_TRIAL_OF_PACKING){
+			//wait for the other request, cancel the packing
+			struct request *prq, *tmp;
+
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: packing cancel, wait for the other requests\n", __func__);
+
+			list_for_each_entry_safe(prq, tmp, &twrite_entry->req_list, queuelist){
+				//requeue all the packed request
+				list_del_init(&prq->queuelist);
+				blk_requeue_request(q, prq);
+			}
+
+			blk_requeue_request(q, rq);
+
+			//indicates the cancel of packing
+			twrite_entry->nr_requests = 0;
+			goto no_pack;
+		}
+		//else:we did our best, just let it go.
+	}
+
+	list_add(&rq->queuelist, &twrite_entry->req_list);
+	twrite_entry->nr_requests = ++reqs;
+	twrite_entry->blocks = req_sectors;
+	twrite_entry->phys_segments = phys_segments;	
 
 no_pack:
 	return twrite_entry;
@@ -3233,20 +3226,8 @@ static void scsi_request_fn(struct request_queue *q)
 
 			BUG_ON(!sdev->shrd);
 
-			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u, req:%llx\n", smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req), (u64)req);
-			
-#if 0			
-			if(req->bio){
-				
-				if(sdev->shrd->bdev != req->bio->bi_bdev){
-					struct request_queue *sdev_q, *bi_bdev_q;
-					sdev_q = bdev_get_queue(sdev->shrd->bdev);
-					bi_bdev_q = bdev_get_queue(req->bio->bi_bdev);
-					shrd_dbg_printk(KERN_ERR, sdev, "%d: %s: shrd->bdev is different from req->bio->bi_bdev, sdev_q is %llu, bdev_q is %llu\n", smp_processor_id(), __func__, 
-						(u64)sdev_q, (u64)bi_bdev_q);
-				}
-			}
-#endif	
+			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD request handling start req pos: %u, sectors: %u, req:%llx\n", 
+				smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req), (u64)req);	
 
 			if(bio && bio->bi_rw & REQ_SHRD_REMAP){
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle remap request\n", smp_processor_id(), __func__);
@@ -3308,6 +3289,13 @@ static void scsi_request_fn(struct request_queue *q)
 				continue;
 			}
 			else if((twrite_entry = scsi_shrd_prep_rw_twrite(q,req))){
+
+				if(!twrite_entry->nr_requests){
+					//packing is low, cancel the scsi_request_fn sequence
+					shrd_put_twrite_entry(sdev->shrd,twrite_entry);
+					break;
+				}
+				
 				BUG_ON(!twrite_entry);
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD handle try twrite\n", smp_processor_id(), __func__);
 				//need twrite?

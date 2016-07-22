@@ -55,6 +55,11 @@
 #define SHRD_NUM_MAX_REMAP_ENTRY 511
 #define SHRD_NUM_MAX_SUBREAD_ENTRY 128
 
+//in order to increase the packing ratio of twrite
+#define SHRD_MIN_PACKING_THRESHOLD 16
+#define SHRD_NUM_TRIAL_OF_PACKING 4
+#define SHRD_PACKING_IS_LOW 3
+
 #define SHRD_REMAP_DATA_PAGE 1 // 1page (experimental)
 #define SHRD_MAX_REMAP_DATA_ENTRIES (SHRD_REMAP_DATA_PAGE * SHRD_NUM_MAX_REMAP_ENTRY)
 
@@ -231,6 +236,8 @@ struct SHRD{
 	u32 jn_log_new_idx;  
 
 	u8 in_remap; //temporary test
+
+	u8 packing_in_trial; //in order to count the packing trial for twrite 
 
 	/*
 	protect each log enries from double allocation. __xx_log_lock should never be used directly.
