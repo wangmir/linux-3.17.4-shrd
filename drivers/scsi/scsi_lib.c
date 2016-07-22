@@ -2344,6 +2344,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			//wait for the other request, cancel the packing
 			struct request *prq, *tmp;
 
+			shrd->packing_in_trial++;
+
 			shrd_dbg_printk(KERN_INFO, sdev, "%s: packing cancel, wait for the other requests\n", __func__);
 
 			list_for_each_entry_safe(prq, tmp, &twrite_entry->req_list, queuelist){
@@ -2361,6 +2363,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		//else:we did our best, just let it go.
 	}
 
+	shrd->packing_in_trial = 0;
 	list_add(&rq->queuelist, &twrite_entry->req_list);
 	twrite_entry->nr_requests = ++reqs;
 	twrite_entry->blocks = req_sectors;
