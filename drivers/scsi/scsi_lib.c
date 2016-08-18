@@ -3153,6 +3153,17 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 	return blk_peek_request(q);	
 }
 
+//wait to increase packed ratio
+//restart run_queue except there are too many active request_fn
+static void scsi_shrd_delay_queue(struct request_queue *q, unsigned long msec){
+
+	spin_unlock_irq(q->queue_lock);
+	msleep_interruptible(msec);
+	spin_lock_irq(q->queue_lock);
+	if(q->request_fn_active < 3)
+		__blk_run_queue(q);
+}
+
 #endif
 
 /*
@@ -3293,7 +3304,8 @@ static void scsi_request_fn(struct request_queue *q)
 				if(!twrite_entry->nr_requests){
 					//packing is low, cancel the scsi_request_fn sequence
 					shrd_put_twrite_entry(sdev->shrd,twrite_entry);
-					break;
+					scsi_shrd_delay_queue(q, SCSI_QUEUE_DELAY);
+					return;
 				}
 				
 				BUG_ON(!twrite_entry);
