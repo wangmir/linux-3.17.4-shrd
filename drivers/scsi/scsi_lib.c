@@ -3161,10 +3161,8 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 static void scsi_shrd_delay_queue(struct request_queue *q, unsigned long msec){
 
 	spin_unlock_irq(q->queue_lock);
-	msleep_interruptible(msec);
 	spin_lock_irq(q->queue_lock);
-	if(q->request_fn_active < 3)
-		__blk_run_queue(q);
+	__blk_run_queue(q);
 }
 
 #endif
