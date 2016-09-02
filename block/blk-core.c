@@ -1639,6 +1639,7 @@ get_rq:
 		if (!request_count)
 			trace_block_plug(q);
 		else {
+			//for shrd test
 			if (request_count >= BLK_MAX_REQUEST_COUNT) {
 				blk_flush_plug_list(plug, false);
 				trace_block_plug(q);
