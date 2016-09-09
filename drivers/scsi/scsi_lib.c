@@ -3189,7 +3189,7 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 
 	prq = blk_peek_request(q);
 
-	if(!rq_data_dir(prq)) //read first
+	if(prq != NULL && !rq_data_dir(prq)) //read first
 		return prq;
 	
 	list_for_each_entry(req, &sdev->shrd->spcmd_request_list, spcmd_list){

@@ -816,7 +816,7 @@ sdev_show_shrd_statistics(struct device *dev, struct device_attribute *attr, cha
 		"normal read req: %u\n"
 		"log write page: %u\n"
 		"normal write page: %u\n"
-		"normal read page: %u\\n"
+		"normal read page: %u\n"
 		"twrite hdr: %u\n"
 		"twrite data: %u\n"
 		"padding: %u\n"
