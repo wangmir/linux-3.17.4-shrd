@@ -21,6 +21,7 @@
 
 #define SHRD_RW_THRESHOLD_IN_SECTOR 32 //under 16KB write requests will be gathered as twrite data
 #define SHRD_RW_NUM_ADAPTIVE_PACKING 8
+#define SHRD_LOW_PACKING 4
 
 #define SHRD_TWRITE_ENTRIES (32U)
 #define SHRD_REMAP_ENTRIES (32U)  // (experimental)
@@ -246,10 +247,38 @@ struct SHRD{
 	struct block_device *bdev;
 	struct gendisk *rq_disk;
 
-	//for debug
-	u32 twrite_hdr_cnt;
-	u32 twrite_data_cnt;
-	u32 remap_cnt;
+	//for statistics
+	u32 logged_write_request_cnt;
+	u32 normal_write_request_cnt;
+	u32 normal_read_request_cnt;
+	u32 log_read_request_cnt;
+	u32 logged_write_page_cnt;
+	u32 normal_write_page_cnt;
+	u32 normal_read_page_cnt;
+	u32 log_read_page_cnt;
+	u32 twrite_hdr_cnt; //# of twrite header (= twrite cmd count)
+	u32 twrite_data_cnt; //# of sended twrite data cnt (including padding), in page
+	u32 padding_cnt; // # of padding write in page
+	u32 remap_cnt; // # of remap cmd
+	u32 remap_entry_cnt; // # of map entries in remap
+
+	//reason of halt of packing
+	u32 halt_noreq_cnt;
+	u32 halt_read_cnt;
+	u32 halt_flush_cnt;
+	u32 halt_discard_cnt;
+	u32 halt_fua_cnt;
+	u32 halt_full_cnt;
+	u32 halt_log_full_cnt;
+
+	//reason of low packing (halt at certain threshold)
+
+	u32 low_halt_noreq_cnt;
+	u32 low_halt_read_cnt;
+	u32 low_halt_flush_cnt;
+	u32 low_halt_discard_cnt;
+	u32 low_halt_fua_cnt;
+	u32 low_halt_log_full_cnt;
 	
 };
 

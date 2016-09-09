@@ -801,6 +801,50 @@ sdev_store_shrd_enable(struct device *dev, struct device_attribute *attr,
 
 static DEVICE_ATTR(shrd_enable, S_IRUGO | S_IWUSR, sdev_show_shrd_enable, sdev_store_shrd_enable);
 
+static ssize_t
+sdev_show_shrd_statistics(struct device *dev, struct device_attribute *attr, char *buf){
+
+	struct scsi_device *sdev;
+	struct SHRD *shrd;
+	int ret;
+	sdev = to_scsi_device(dev);
+	shrd = sdev->shrd;
+
+	ret = snprintf(buf, 2048, 
+		"log write req: %u\n"
+		"normal write req: %u\n"
+		"normal read req: %u\n"
+		"log write page: %u\n"
+		"normal write page: %u\n"
+		"normal read page: %u\\n"
+		"twrite hdr: %u\n"
+		"twrite data: %u\n"
+		"padding: %u\n"
+		"remap: %u\n"
+		"\n"
+		"halt noreq: %u\n"
+		"halt read: %u\n"
+		"halt flush: %u\n"
+		"halt discard: %u\n"
+		"halt full: %u\n"
+		"halt log full: %u\n"
+		"low halt noreq: %u\n"
+		"low halt read: %u\n"
+		"low halt flush: %u\n"
+		"low halt discard: %u\n"
+		"low halt log full: %u\n",
+		shrd->logged_write_request_cnt, shrd->normal_write_request_cnt, shrd->normal_read_request_cnt, shrd->logged_write_page_cnt,
+		shrd->normal_write_page_cnt, shrd->normal_read_page_cnt, shrd->twrite_hdr_cnt, shrd->twrite_data_cnt, shrd->padding_cnt,
+		shrd->remap_cnt, shrd->halt_noreq_cnt, shrd->halt_read_cnt, shrd->halt_flush_cnt, shrd->halt_discard_cnt, shrd->halt_full_cnt,
+		shrd->halt_log_full_cnt, shrd->low_halt_noreq_cnt, shrd->low_halt_read_cnt, shrd->low_halt_flush_cnt, shrd->low_halt_discard_cnt,
+		shrd->low_halt_log_full_cnt);
+
+	return ret;
+	
+}
+
+static DEVICE_ATTR(shrd_statistics, S_IRUGO, sdev_show_shrd_enable, NULL);
+
 #endif
 
 
@@ -1106,6 +1150,7 @@ static struct attribute *scsi_sdev_attrs[] = {
 	&dev_attr_shrd_rw_threshold.attr,
 	&dev_attr_shrd_adaptive_packing.attr,
 	&dev_attr_shrd_enable.attr,
+	&dev_attr_shrd_statistics.attr,
 #endif
 	&dev_attr_iocounterbits.attr,
 	&dev_attr_iorequest_cnt.attr,

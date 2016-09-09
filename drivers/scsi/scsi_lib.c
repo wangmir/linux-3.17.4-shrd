@@ -2216,6 +2216,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			}
 			else{
 				shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because log is full1\n", __func__);
+				
+				shrd->halt_log_full_cnt++;
 				goto no_pack; //log is full, don't packed.
 			}
 		}
@@ -2228,6 +2230,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		}
 		else{
 			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because log is full2\n", __func__);
+			
+			shrd->halt_log_full_cnt++;
 			goto no_pack;
 		}
 	}
@@ -2273,9 +2277,31 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 		
 		if(!next){
 			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of noreq\n", __func__);
+
+			shrd->halt_noreq_cnt++;
+			if(req_sectors / SHRD_SECTORS_PER_PAGE <= SHRD_LOW_PACKING){
+				shrd->low_halt_noreq_cnt++;
+			}
+			
 			put_back = false;
 			break;
 		}
+		if(next->cmd_flags & REQ_DISCARD || next->cmd_flags & REQ_FLUSH || next->cmd_flags & REQ_FUA){
+			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush, fua\n", __func__);
+
+			if(next->cmd_flags & REQ_DISCARD)
+				shrd->halt_discard_cnt++;
+			else
+				shrd->halt_flush_cnt++;
+			if(req_sectors / SHRD_SECTORS_PER_PAGE <= SHRD_LOW_PACKING){				
+				if(next->cmd_flags & REQ_DISCARD)
+					shrd->low_halt_discard_cnt++;
+				else
+					shrd->low_halt_flush_cnt++;
+			}
+			break;
+		}
+		
 		if(!next->bio){
 			shrd_dbg_printk(KERN_INFO, sdev, "%s: bio is NULL\n", __func__);
 			break;
@@ -2285,18 +2311,21 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			break;
 		}
 
-		if(next->cmd_flags & REQ_DISCARD || next->cmd_flags & REQ_FLUSH || next->cmd_flags & REQ_FUA){
-			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of discard, flush, fua\n", __func__);
-			break;
-		}
-
 		if(rq_data_dir(cur) != rq_data_dir(next)){
 			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of read request\n", __func__);
+			shrd->halt_read_cnt++;
+			if(req_sectors / SHRD_SECTORS_PER_PAGE <= SHRD_LOW_PACKING){
+				shrd->low_halt_read_cnt++;
+			}
 			break;
 		}
 
 		if(blk_rq_sectors(next) > shrd->rw_threshold){
 			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of large next\n", __func__);
+			shrd->halt_noreq_cnt++;
+			if(req_sectors / SHRD_SECTORS_PER_PAGE <= SHRD_LOW_PACKING){
+				shrd->low_halt_noreq_cnt++;
+			}
 			break;
 		}
 		
@@ -2319,6 +2348,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			req_sectors -= blk_rq_sectors(next);
 			phys_segments -= next->nr_phys_segments;
 			shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
+			shrd->halt_full_cnt++;
 			break;
 		}
 
@@ -2328,6 +2358,7 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 			if(req_sectors + SHRD_SECTORS_PER_PAGE > max_packed_rw){
 				req_sectors -= blk_rq_sectors(next);
 				shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because of max_packed_rw %d\n", __func__, max_packed_rw);
+				shrd->halt_full_cnt++;
 				break;
 			}
 			else{
@@ -2370,6 +2401,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	if(twrite_entry != NULL){
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d, num blocks %d, num segments %d, num padding %d \n",
 			__func__, twrite_entry->nr_requests, twrite_entry->blocks, twrite_entry->phys_segments, padding);
+		shrd->logged_write_request_cnt = twrite_entry->nr_requests;
+		shrd->logged_write_page_cnt = twrite_entry->blocks / SHRD_SECTORS_PER_PAGE - padding;
 		return twrite_entry;
 	}
 
@@ -2728,10 +2761,12 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 			}
 			BUG();
 		}
+
+		shrd->logged_write_request_cnt++;
 		
 		if((idx & 0x1) != ((blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE) & 0x1)){
 			//need padding
-			
+			shrd->padding_cnt++;
 			header->o_addr[idx - shrd->rw_log_new_idx] = SHRD_INVALID_LPN;
 			idx++;
 
@@ -2740,11 +2775,14 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 		}
 
 		for(i = 0; i < blk_rq_sectors(prq) / SHRD_SECTORS_PER_PAGE; i++){
+
+			shrd->logged_write_page_cnt++;
 			
 			header->o_addr[idx -shrd->rw_log_new_idx] = blk_rq_pos(prq) / SHRD_SECTORS_PER_PAGE + i;
 			
 			shrd->shrd_rw_map[idx].t_addr = SHRD_RW_LOG_START_IN_PAGE+ idx;
 			shrd->shrd_rw_map[idx].o_addr = header->o_addr[idx - shrd->rw_log_new_idx];
+
 			if(shrd->shrd_rw_map[idx].flags == SHRD_VALID_MAP){
 				struct rb_node *node;
 				struct SHRD_MAP *map;
@@ -2764,10 +2802,9 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 					
 					sdev_printk(KERN_ERR, sdev, "%s: rbtree traversing, map->oaddr: %u, taddr: %u\n", __func__, map->o_addr, map->t_addr);
 				}
-				
-				
 				BUG();//should be remapped
 			}
+			
 			shrd->shrd_rw_map[idx].flags = SHRD_VALID_MAP;
 			scsi_shrd_map_insert(&shrd->rw_mapping, &shrd->shrd_rw_map[idx]);
 
@@ -2874,6 +2911,8 @@ static void __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 size){
 			continue;
 		
 		if((map->t_addr >= start_idx + SHRD_RW_LOG_START_IN_PAGE) && (map->t_addr <= end_idx + SHRD_RW_LOG_START_IN_PAGE)){
+
+			shrd->remap_entry_cnt++;
 
 			if(entry->remap_data[0]->remap_count == SHRD_NUM_MAX_REMAP_ENTRY){
 				//need to allocate new remap entry and insert the former entry into list
@@ -3146,8 +3185,13 @@ static struct SHRD_TREAD* scsi_shrd_check_read_requests(struct request_queue *q,
 struct request * scsi_shrd_peek_request(struct request_queue *q){
 
 	struct scsi_device *sdev = q->queuedata;
-	struct request* req = NULL;
-			
+	struct request *req = NULL, *prq = NULL;
+
+	prq = blk_peek_request(q);
+
+	if(!rq_data_dir(prq)) //read first
+		return prq;
+	
 	list_for_each_entry(req, &sdev->shrd->spcmd_request_list, spcmd_list){
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SPCMD debug, req pos: %u, sectors: %u, req: %llx\n",
 			smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req), (u64)req);
@@ -3157,7 +3201,7 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 			return req;
 		}
 	}
-	return blk_peek_request(q);	
+	return prq;	
 }
 
 #endif
@@ -3375,6 +3419,21 @@ spcmd:
 					sdev->shrd->in_remap = 1;
 					shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
 						sdev->shrd->twrite_data_cnt, sdev->shrd->remap_cnt);
+				}
+				else{
+					//normal request
+					if(!(req->cmd_flags & REQ_FLUSH || req->cmd_flags & REQ_FUA || req->cmd_flags & REQ_DISCARD)){
+						if(rq_data_dir(req)){
+							//write request
+							sdev->shrd->normal_write_request_cnt++;
+							sdev->shrd->normal_write_page_cnt += blk_rq_sectors(req) / SHRD_SECTORS_PER_PAGE;
+						}
+						else{
+							//read request
+							sdev->shrd->normal_read_request_cnt++;
+							sdev->shrd->normal_read_page_cnt += blk_rq_sectors(req) / SHRD_SECTORS_PER_PAGE;
+						}
+					}
 				}
 			}
 		}
