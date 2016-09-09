@@ -843,7 +843,7 @@ sdev_show_shrd_statistics(struct device *dev, struct device_attribute *attr, cha
 	
 }
 
-static DEVICE_ATTR(shrd_statistics, S_IRUGO, sdev_show_shrd_enable, NULL);
+static DEVICE_ATTR(shrd_statistics, S_IRUGO, sdev_show_shrd_statistics, NULL);
 
 #endif
 
