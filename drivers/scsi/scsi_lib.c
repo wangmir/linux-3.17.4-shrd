@@ -2077,13 +2077,13 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 		BUG();
 	}
 
-	list_add(&req->spcmd_list, &shrd->spcmd_request_list);
-/*
+//	list_add(&req->spcmd_list, &shrd->spcmd_request_list);
+
 	if(bio && bio->bi_rw & REQ_SHRD_TWRITE_DAT)
 		list_add(&req->spcmd_list, &shrd->spcmd_request_list);
 	else
 		list_add_tail(&req->spcmd_list, &shrd->spcmd_request_list);
-*/
+
 
 	
 }
