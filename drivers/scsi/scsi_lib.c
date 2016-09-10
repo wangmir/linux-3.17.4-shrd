@@ -1446,6 +1446,8 @@ static inline int scsi_dev_queue_ready(struct request_queue *q,
 	if (busy >= sdev->queue_depth)
 		goto out_dec;
 
+	printk("SHRD queue_depth: %u\n", busy);
+
 	return 1;
 out_dec:
 	atomic_dec(&sdev->device_busy);
@@ -2449,6 +2451,8 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		//error handling check: should we need to wait for the twrite header completion before send twrite data?
 		spin_lock_irqsave(q->queue_lock, flags);
 
+		shrd->ongoing_thead_cnt--;
+
 		//delete this request from spcmd queue
 		list_del(&twrite_entry->header_rq->spcmd_list);
 		
@@ -2488,6 +2492,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		}
 		//spin_unlock_irqrestore(shrd->bdev->bd_queue->queue_lock, flags);
 		spin_lock_irqsave(q->queue_lock,flags);
+		shrd->ongoing_tdata_cnt--;
 		list_del(&twrite_entry->data_rq->spcmd_list);
 		shrd_put_twrite_entry(shrd, twrite_entry);
 		spin_unlock_irqrestore(q->queue_lock, flags);
@@ -2507,6 +2512,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 			remap_data->remap_count);
 
 		spin_lock_irqsave(q->queue_lock, flags);
+		shrd->ongoing_remap_cnt--;
 
 		for(i = 0; i < remap_data->remap_count; i++){
 			scsi_shrd_map_remove(remap_data->o_addr[i], &shrd->rw_mapping);
@@ -3405,16 +3411,19 @@ spcmd:
 			if(req->bio){
 				if(req->bio->bi_rw & REQ_SHRD_TWRITE_HDR){
 					sdev->shrd->twrite_hdr_cnt++;
+					sdev->shrd->ongoing_thead_cnt++;
 					shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
 						sdev->shrd->twrite_data_cnt, sdev->shrd->remap_cnt);
 				}
 				else if(req->bio->bi_rw & REQ_SHRD_TWRITE_DAT){
 					sdev->shrd->twrite_data_cnt += blk_rq_sectors(req) >> 3;
+					sdev->shrd->ongoing_tdata_cnt++;
 					shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
 						sdev->shrd->twrite_data_cnt, sdev->shrd->remap_cnt);
 				}
 				else if(req->bio->bi_rw & REQ_SHRD_REMAP){
 					sdev->shrd->remap_cnt++;
+					sdev->shrd->ongoing_remap_cnt++;
 					//for in_remap flags
 					sdev->shrd->in_remap = 1;
 					shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: shrd stat: twrite hdr: %u, twrite data: %u, remap: %u\n", smp_processor_id(), __func__, sdev->shrd->twrite_hdr_cnt,
@@ -3435,6 +3444,7 @@ spcmd:
 						}
 					}
 				}
+				printk("SHRD SPCMD queue_depth, thead: %u, tdata: %u, remap: %u\n", sdev->shrd->ongoing_thead_cnt, sdev->shrd->ongoing_tdata_cnt, sdev->shrd->ongoing_remap_cnt);
 			}
 		}
 #endif

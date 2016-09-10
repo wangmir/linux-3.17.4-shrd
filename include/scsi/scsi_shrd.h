@@ -279,6 +279,10 @@ struct SHRD{
 	u32 low_halt_discard_cnt;
 	u32 low_halt_fua_cnt;
 	u32 low_halt_log_full_cnt;
+
+	u32 ongoing_thead_cnt;
+	u32 ongoing_tdata_cnt;
+	u32 ongoing_remap_cnt;
 	
 };
 
