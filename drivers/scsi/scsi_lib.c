@@ -3197,17 +3197,16 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 			}
 		}
 	}
-	else{
-		//send twrite cmd
-		list_for_each_entry(req, &sdev->shrd->trw_request_list, spcmd_list){
-			if(!list_empty(&req->queuelist)){
-				if(req->bio->bi_rw == REQ_SHRD_TWRITE_DAT){
-					sdev->shrd->delayed_remap_threshold += req->bio->bi_iter.bi_size / SHRD_SECTORS_PER_PAGE;
-				}
-				return req;
+	//send twrite cmd
+	list_for_each_entry(req, &sdev->shrd->trw_request_list, spcmd_list){
+		if(!list_empty(&req->queuelist)){
+			if(req->bio->bi_rw == REQ_SHRD_TWRITE_DAT){
+				sdev->shrd->delayed_remap_threshold += req->bio->bi_iter.bi_size / SHRD_SECTORS_PER_PAGE;
 			}
+			return req;
 		}
 	}
+	
 	
 	return prq;	
 }
