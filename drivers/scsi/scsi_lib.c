@@ -1974,7 +1974,8 @@ u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size,
 	INIT_LIST_HEAD(&sdev->shrd->rw_mapping.list_root);
 	//INIT_LIST_HEAD(&sdev->shrd->jn_mapping.list_root);
 
-	INIT_LIST_HEAD(&sdev->shrd->spcmd_request_list);
+	INIT_LIST_HEAD(&sdev->shrd->remap_request_list);
+	INIT_LIST_HEAD(&sdev->shrd->trw_request_list);
 
 	sdev->shrd->in_remap = 0;
 	scsi_shrd_bd_init(q);
@@ -1986,7 +1987,7 @@ fin:
 static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, struct request *req){
 	
 	const bool sync = !!(bio->bi_rw & REQ_SYNC);
-	int rw_flags, where = ELEVATOR_INSERT_FRONT;
+	int rw_flags, where = ELEVATOR_INSERT_BACK;
 
 	blk_queue_bounce(q, &bio);
 
@@ -2079,12 +2080,12 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 		BUG();
 	}
 
-//	list_add(&req->spcmd_list, &shrd->spcmd_request_list);
-
 	if(bio && bio->bi_rw & REQ_SHRD_TWRITE_DAT)
-		list_add(&req->spcmd_list, &shrd->spcmd_request_list);
-	else
-		list_add_tail(&req->spcmd_list, &shrd->spcmd_request_list);
+		list_add(&req->spcmd_list, &shrd->trw_request_list);
+	else if(bio && bio->bi_rw & REQ_SHRD_TWRITE_HDR)
+		list_add_tail(&req->spcmd_list, &shrd->trw_request_list);
+	else if(bio && bio->bi_rw && REQ_SHRD_REMAP)
+		list_add_tail(&req->spcmd_list, &shrd->remap_request_list);
 
 
 	
@@ -2099,17 +2100,6 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 static int scsi_shrd_prep_req(struct request_queue *q, struct request *rq){
 
 	int ret;
-
-#if 0
-	//test
-	if(rq->cmd_flags & REQ_FLUSH || rq->cmd_flags & REQ_FUA){
-		if(!rq->bio){
-			blk_start_request(rq);
-			__blk_end_request_all(rq, 0);
-			return -1;
-		}
-	}
-#endif
 	
 	ret = scsi_prep_fn(q, rq);
 	if (ret == BLKPREP_OK) {
@@ -2985,7 +2975,7 @@ static struct SHRD_REMAP* scsi_shrd_prep_remap_if_need(struct request_queue *q){
 	}
 
 	if(!list_empty(&shrd->ongoing_remap_cmd_list)){
-		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: there are ongoing remap_cmd we'll stall remap\n", smp_processor_id(), __func__);
+		shrd_dbg_printk(KERN_ERR, sdev, "%d: %s: there are ongoing remap_cmd we'll stall remap\n", smp_processor_id(), __func__);
 		return NULL;
 	}
 
@@ -3197,16 +3187,28 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 
 	if(prq != NULL && !rq_data_dir(prq)) //read first
 		return prq;
-	
-	list_for_each_entry(req, &sdev->shrd->spcmd_request_list, spcmd_list){
-		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SPCMD debug, req pos: %u, sectors: %u, req: %llx\n",
-			smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req), (u64)req);
-		if(!list_empty(&req->queuelist)){
-			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SPCMD handling start, req pos: %u, sectors: %u, req: %llx\n",
-				smp_processor_id(), __func__, blk_rq_pos(req), blk_rq_sectors(req), (u64)req);
-			return req;
+
+	if(sdev->shrd->delayed_remap_threshold == SHRD_DELAYED_REMAP_THRESHOLD){
+		//able to send remap
+		list_for_each_entry(req, &sdev->shrd->remap_request_list, spcmd_list){
+			if(!list_empty(&req->queuelist)){
+				sdev->shrd->delayed_remap_threshold = 0;
+				return req;
+			}
 		}
 	}
+	else{
+		//send twrite cmd
+		list_for_each_entry(req, &sdev->shrd->trw_request_list, spcmd_list){
+			if(!list_empty(&req->queuelist)){
+				if(req->bio->bi_rw == REQ_SHRD_TWRITE_DAT){
+					sdev->shrd->delayed_remap_threshold += req->bio->bi_iter.bi_size / SHRD_SECTORS_PER_PAGE;
+				}
+				return req;
+			}
+		}
+	}
+	
 	return prq;	
 }
 
