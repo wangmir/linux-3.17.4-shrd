@@ -1446,7 +1446,7 @@ static inline int scsi_dev_queue_ready(struct request_queue *q,
 	if (busy >= sdev->queue_depth)
 		goto out_dec;
 
-	printk("SHRD queue_depth: %u\n", busy);
+	//printk("SHRD queue_depth: %u\n", busy);
 
 	return 1;
 out_dec:
@@ -2034,8 +2034,6 @@ static void scsi_shrd_blk_queue_bio(struct request_queue *q, struct bio *bio, st
 		req->cpu = raw_smp_processor_id();
 
 	blk_account_io_start(req, true); 
-	__elv_add_request(q, req, where);
-
 }
 
 
@@ -2081,15 +2079,17 @@ static void scsi_shrd_submit_bio(int rw, struct bio *bio, struct request *req){
 	}
 
 	if(bio && bio->bi_rw & REQ_SHRD_TWRITE_DAT)
-		list_add(&req->spcmd_list, &shrd->trw_request_list);
+		list_add(&req->queuelist, &shrd->trw_request_list);
 	else if(bio && bio->bi_rw & REQ_SHRD_TWRITE_HDR)
-		list_add_tail(&req->spcmd_list, &shrd->trw_request_list);
+		list_add_tail(&req->queuelist, &shrd->trw_request_list);
 	else if(bio && bio->bi_rw && REQ_SHRD_REMAP)
-		list_add_tail(&req->spcmd_list, &shrd->remap_request_list);
+		list_add_tail(&req->queuelist, &shrd->remap_request_list);
 
 
 	
 }
+
+
 
 /*
 	prep function for non_twrite request.
@@ -2370,26 +2370,12 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 
 	if(put_back)
 		blk_requeue_request(q, next);
-
-	//if(reqs > 0){
-		//adaptive packing need to be handled in here
-		//if reqs < THRESHOLD then
-		//
 		
-		list_add(&rq->queuelist, &twrite_entry->req_list);
-		twrite_entry->nr_requests = ++reqs;
-		twrite_entry->blocks = req_sectors;
-		twrite_entry->phys_segments = phys_segments;
-	//}
-	/*
-	else{
-		shrd_dbg_printk(KERN_INFO, sdev, "%s: nopack because there are no requests to pack\n", __func__);
-		shrd_put_twrite_entry(sdev->shrd, twrite_entry);
-		blk_requeue_request(q, rq);
-		twrite_entry = NULL;
-		goto no_pack;
-	}
-*/
+	list_add(&rq->queuelist, &twrite_entry->req_list);
+	twrite_entry->nr_requests = ++reqs;
+	twrite_entry->blocks = req_sectors;
+	twrite_entry->phys_segments = phys_segments;
+
 	if(twrite_entry != NULL){
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d, num blocks %d, num segments %d, num padding %d \n",
 			__func__, twrite_entry->nr_requests, twrite_entry->blocks, twrite_entry->phys_segments, padding);
@@ -2442,9 +2428,6 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		spin_lock_irqsave(q->queue_lock, flags);
 
 		shrd->ongoing_thead_cnt--;
-
-		//delete this request from spcmd queue
-		list_del(&twrite_entry->header_rq->spcmd_list);
 		
 		scsi_shrd_submit_bio(REQ_SYNC, twrite_entry->data, twrite_entry->data_rq); 
 		spin_unlock_irqrestore(q->queue_lock, flags);
@@ -2483,7 +2466,7 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		//spin_unlock_irqrestore(shrd->bdev->bd_queue->queue_lock, flags);
 		spin_lock_irqsave(q->queue_lock,flags);
 		shrd->ongoing_tdata_cnt--;
-		list_del(&twrite_entry->data_rq->spcmd_list);
+
 		shrd_put_twrite_entry(shrd, twrite_entry);
 		spin_unlock_irqrestore(q->queue_lock, flags);
 	}
@@ -2512,7 +2495,6 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: remap complete, start %u, new %u, SHRD_RW_LOG_START_IN_PAGE %u\n", smp_processor_id(), __func__, 
 			shrd->rw_log_start_idx, shrd->rw_log_new_idx, SHRD_RW_LOG_START_IN_PAGE);
 
-		list_del(&remap_entry->req->spcmd_list);
 		shrd_put_remap_entry(shrd, remap_entry);
 		shrd->in_remap = 0;
 		
@@ -2528,7 +2510,6 @@ static void scsi_shrd_bio_endio(struct bio* bio, int err){
 		shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: subread completion: subread_entry: %llx, tread_entry: %llx, orig request addr: %u, size: %u\n",
 			smp_processor_id(), __func__, (u64)subread_entry, (u64)tread_entry, (u32)blk_rq_pos(tread_entry->orig_req), blk_rq_sectors(tread_entry->orig_req));
 		list_del(&subread_entry->subread_cmd_list);
-		list_del(&subread_entry->req->spcmd_list);
 		shrd_put_subread_entry(shrd, subread_entry);
 		tread_entry->subread_cnt--;
 		
@@ -3190,23 +3171,19 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 
 	if(sdev->shrd->delayed_remap_threshold == SHRD_DELAYED_REMAP_THRESHOLD){
 		//able to send remap
-		list_for_each_entry(req, &sdev->shrd->remap_request_list, spcmd_list){
-			if(!list_empty(&req->queuelist)){
-				sdev->shrd->delayed_remap_threshold = 0;
-				return req;
-			}
-		}
-	}
-	//send twrite cmd
-	list_for_each_entry(req, &sdev->shrd->trw_request_list, spcmd_list){
-		if(!list_empty(&req->queuelist)){
-			if(req->bio->bi_rw == REQ_SHRD_TWRITE_DAT){
-				sdev->shrd->delayed_remap_threshold += req->bio->bi_iter.bi_size / SHRD_SECTORS_PER_PAGE;
-			}
+		list_for_each_entry(req, &sdev->shrd->remap_request_list, queuelist){
+			sdev->shrd->delayed_remap_threshold = 0;
 			return req;
 		}
 	}
-	
+	//send twrite cmd
+	list_for_each_entry(req, &sdev->shrd->trw_request_list, queuelist){
+		
+		if(req->bio->bi_rw == REQ_SHRD_TWRITE_DAT){
+			sdev->shrd->delayed_remap_threshold += req->bio->bi_iter.bi_size / SHRD_SECTORS_PER_PAGE;
+		}
+		return req;	
+	}
 	
 	return prq;	
 }
@@ -3445,7 +3422,7 @@ spcmd:
 						}
 					}
 				}
-				printk("SHRD SPCMD queue_depth, thead: %u, tdata: %u, remap: %u\n", sdev->shrd->ongoing_thead_cnt, sdev->shrd->ongoing_tdata_cnt, sdev->shrd->ongoing_remap_cnt);
+				//printk("SHRD SPCMD queue_depth, thead: %u, tdata: %u, remap: %u\n", sdev->shrd->ongoing_thead_cnt, sdev->shrd->ongoing_tdata_cnt, sdev->shrd->ongoing_remap_cnt);
 			}
 		}
 #endif

@@ -216,8 +216,6 @@ struct SHRD{
 	pseudo request queue for spcmd (twrite hdr, data, remap, subread).
 	
 	they should be treated firstly than normal request, so we maintain separate list for the sp request.
-	notice that the list_head in the request structure is not the queuelist, but a additional list_head structure called spcmd_list,
-	because the request also should be in the request_queue of the device.
 */
 	struct list_head remap_request_list;
 	struct list_head trw_request_list;

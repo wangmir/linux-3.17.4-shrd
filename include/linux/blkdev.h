@@ -98,10 +98,6 @@ enum rq_cmd_type_bits {
  */
 struct request {
 	struct list_head queuelist;
-
-#ifdef CONFIG_SCSI_SHRD_TEST0
-	struct list_head spcmd_list;
-#endif
 	
 	union {
 		struct call_single_data csd;
