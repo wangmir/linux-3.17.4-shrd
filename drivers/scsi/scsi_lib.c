@@ -1761,6 +1761,7 @@ void scsi_shrd_map_remove(u32 oaddr, struct SHRD_MAP_HEAD *mapping){
 	struct rb_root *tree = &mapping->rbtree_root;
 	struct SHRD_MAP *map_entry = scsi_shrd_map_search(tree, oaddr);
 	if(map_entry){
+		map_entry->flags = SHRD_INVALID_MAP;
 		list_del(&map_entry->list);
 		rb_erase(&map_entry->node, tree);
 		memset(map_entry, 0x00, sizeof(struct SHRD_MAP));
@@ -1884,7 +1885,7 @@ u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size,
 		sdev->shrd->twrite_cmd[idx].data_rq = (struct request *)kmalloc(sizeof(struct request), GFP_KERNEL);
 	}
 
-	sdev->shrd->remap_cmd = (struct SHRD_REMAP *)kmalloc(sizeof(struct SHRD_REMAP) * SHRD_REMAP_ENTRIES, GFP_KERNEL);
+	sdev->shrd->remap_cmd = (struct SHRD_REMAP *)kmalloc(sizeof(struct SHRD_REMAP) * SHRD_REMAP_ENTRIES * 4, GFP_KERNEL);
 	if(sdev->shrd->remap_cmd == NULL){
 		rtn = 1;
 		kfree(sdev->shrd->shrd_rw_map);
@@ -1896,7 +1897,7 @@ u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size,
 		goto fin;
 	}
 
-	for(idx = 0; idx < SHRD_REMAP_ENTRIES; idx++){
+	for(idx = 0; idx < SHRD_REMAP_ENTRIES * 4; idx++){
 		int iter;
 
 		sdev->shrd->remap_cmd[idx].req = (struct request *)kmalloc(sizeof(struct request), GFP_KERNEL);
@@ -1950,8 +1951,8 @@ u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size,
 
 	INIT_LIST_HEAD(&sdev->shrd->free_remap_cmd_list);
 	INIT_LIST_HEAD(&sdev->shrd->ongoing_remap_cmd_list);
-	for(idx=0; idx<SHRD_REMAP_ENTRIES; idx++){
-		sdev->shrd->remap_cmd[idx].entry_num = idx;
+	for(idx=0; idx<SHRD_REMAP_ENTRIES * 4; idx++){
+		sdev->shrd->remap_cmd[idx].entry_num = idx % SHRD_REMAP_ENTRIES;
 		list_add_tail(&sdev->shrd->remap_cmd[idx].remap_cmd_list, &sdev->shrd->free_remap_cmd_list);
 	}
 
@@ -2760,7 +2761,7 @@ static void scsi_shrd_packing_rw_twrite(struct request_queue *q, struct SHRD_TWR
 			shrd->shrd_rw_map[idx].t_addr = SHRD_RW_LOG_START_IN_PAGE+ idx;
 			shrd->shrd_rw_map[idx].o_addr = header->o_addr[idx - shrd->rw_log_new_idx];
 
-			if(shrd->shrd_rw_map[idx].flags == SHRD_VALID_MAP){
+			if(shrd->shrd_rw_map[idx].flags != SHRD_INVALID_MAP){
 				struct rb_node *node;
 				struct SHRD_MAP *map;
 				printk(KERN_ERR "ERROR on packing RW\n");
@@ -2891,6 +2892,7 @@ static void __scsi_shrd_do_remap_rw_log(struct request_queue *q, u32 size){
 
 			shrd->remap_entry_cnt++;
 
+			//if(entry->remap_data[0]->remap_count == 128){
 			if(entry->remap_data[0]->remap_count == SHRD_NUM_MAX_REMAP_ENTRY){
 				//need to allocate new remap entry and insert the former entry into list
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: allocate another remap entry for remap\n", smp_processor_id(), __func__);
@@ -3164,15 +3166,20 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 	struct scsi_device *sdev = q->queuedata;
 	struct request *req = NULL, *prq = NULL;
 
+	//test
+	printk("%s: delayed_remap_threshold: %u\n", __func__, sdev->shrd->delayed_remap_threshold);
+
 	prq = blk_peek_request(q);
 
 	if(prq != NULL && !rq_data_dir(prq)) //read first
 		return prq;
 
-	if(sdev->shrd->delayed_remap_threshold == SHRD_DELAYED_REMAP_THRESHOLD){
+//	if(1){
+	if(sdev->shrd->delayed_remap_threshold >= 5){
 		//able to send remap
 		list_for_each_entry(req, &sdev->shrd->remap_request_list, queuelist){
 			sdev->shrd->delayed_remap_threshold = 0;
+			printk("handle remap\n");
 			return req;
 		}
 	}
@@ -3180,11 +3187,13 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 	list_for_each_entry(req, &sdev->shrd->trw_request_list, queuelist){
 		
 		if(req->bio->bi_rw == REQ_SHRD_TWRITE_DAT){
-			sdev->shrd->delayed_remap_threshold += req->bio->bi_iter.bi_size / SHRD_SECTORS_PER_PAGE;
+			printk("handle tdata, bi_size: %u\n", req->bio->bi_iter.bi_size);
 		}
+		printk("handle thead or tread, bi_size: %u\n", req->bio->bi_iter.bi_size);
+		sdev->shrd->delayed_remap_threshold++;
 		return req;	
 	}
-	
+	sdev->shrd->delayed_remap_threshold++;
 	return prq;	
 }
 
@@ -3232,10 +3241,12 @@ static void scsi_request_fn(struct request_queue *q)
 #ifdef CONFIG_SCSI_SHRD_TEST0
 		
 		//test
+		/*
 		if(sdev->shrd_on && sdev->shrd->in_remap){
 			shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: break because shrd is in remap\n", smp_processor_id(), __func__);
 			break;
 		}
+		*/
 		if(sdev->shrd_on)
 			req = scsi_shrd_peek_request(q);
 		else
