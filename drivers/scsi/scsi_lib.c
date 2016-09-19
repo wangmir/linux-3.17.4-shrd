@@ -3334,10 +3334,12 @@ static void scsi_request_fn(struct request_queue *q)
 				}
 				goto spcmd;
 			}
+/*
 			else if(sdev->shrd->in_remap){
 				shrd_dbg_printk(KERN_INFO, sdev, "%d: %s: SHRD in remap status, just handle normal I/O only\n", smp_processor_id(), __func__);
 				goto spcmd;
 			}
+*/
 			else if((remap_entry = scsi_shrd_prep_remap_if_need(q))){
 				//need remap?
 				BUG_ON(!remap_entry);
