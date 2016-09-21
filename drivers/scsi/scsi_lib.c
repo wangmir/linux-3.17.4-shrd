@@ -2401,8 +2401,8 @@ static struct SHRD_TWRITE * scsi_shrd_prep_rw_twrite(struct request_queue *q, st
 	if(twrite_entry != NULL){
 		shrd_dbg_printk(KERN_INFO, sdev, "%s: prep succeed, num entries %d, num blocks %d, num segments %d, num padding %d \n",
 			__func__, twrite_entry->nr_requests, twrite_entry->blocks, twrite_entry->phys_segments, padding);
-		shrd->logged_write_request_cnt = twrite_entry->nr_requests;
-		shrd->logged_write_page_cnt = twrite_entry->blocks / SHRD_SECTORS_PER_PAGE - padding;
+		//shrd->logged_write_request_cnt = twrite_entry->nr_requests;
+		//shrd->logged_write_page_cnt = twrite_entry->blocks / SHRD_SECTORS_PER_PAGE - padding;
 		return twrite_entry;
 	}
 
