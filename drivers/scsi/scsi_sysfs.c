@@ -754,10 +754,33 @@ sdev_store_shrd_adaptive_packing(struct device *dev, struct device_attribute *at
 	if(err)
 		return err;
 	sdev->adaptive_packing = adaptive_packing;
-	printk("sdev_store_shrd_adaptive_packingcalled, adaptive_packing is %d\n", adaptive_packing);
+	printk("sdev_store_shrd_adaptive_packing called, adaptive_packing is %d\n", adaptive_packing);
 }
 
 static DEVICE_ATTR(shrd_adaptive_packing, S_IRUGO | S_IWUSR, sdev_show_shrd_adaptive_packing, sdev_store_shrd_adaptive_packing);
+
+static ssize_t
+sdev_show_shrd_delayed_remap_threshold(struct device *dev, struct device_attribute *attr, const char*buf){
+	struct scsi_device *sdev;
+	sdev = to_scsi_device(dev);
+	return snprintf(buf, 20, "%u\n", sdev->delayed_remap_threshold);
+}
+
+static ssize_t
+sdev_store_shrd_delayed_remap_threshold(struct device *dev, struct device_attribute *attr, const char*buf, size_t count){
+	struct scsi_device *sdev;
+	unsigned int  delayed_remap_threshold = 0;
+	int err;
+	sdev = to_scsi_device(dev);
+	err = kstrtouint(buf, 10, &delayed_remap_threshold);
+	if(err)
+		return err;
+	sdev->delayed_remap_threshold = delayed_remap_threshold;
+	printk("sdev_store_shrd_delayed_remap_threshold called, delayed_remap_threshold is %d\n", delayed_remap_threshold);
+}
+
+static DEVICE_ATTR(shrd_delayed_remap_threshold, S_IRUGO | S_IWUSR, sdev_show_shrd_delayed_remap_threshold, sdev_store_shrd_delayed_remap_threshold);
+
 
 
 static ssize_t
@@ -785,7 +808,7 @@ sdev_store_shrd_enable(struct device *dev, struct device_attribute *attr,
 	if(shrd_on == 1){
 
 #ifdef CONFIG_SCSI_SHRD_TEST0
-		err = scsi_shrd_init(sdev->request_queue, sdev->remap_threshold, sdev->remap_size, sdev->rw_threshold, sdev->adaptive_packing);
+		err = scsi_shrd_init(sdev->request_queue, sdev->remap_threshold, sdev->remap_size, sdev->rw_threshold, sdev->adaptive_packing, sdev->delayed_remap_threshold);
 		if(err){
 			printk("SHRD::shrd init failed\n");
 		}
@@ -1149,6 +1172,7 @@ static struct attribute *scsi_sdev_attrs[] = {
 	&dev_attr_shrd_remap_size.attr,
 	&dev_attr_shrd_rw_threshold.attr,
 	&dev_attr_shrd_adaptive_packing.attr,
+	&dev_attr_shrd_delayed_remap_threshold.attr,
 	&dev_attr_shrd_enable.attr,
 	&dev_attr_shrd_statistics.attr,
 #endif

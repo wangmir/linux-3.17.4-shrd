@@ -186,6 +186,7 @@ struct SHRD{
 	u32 remap_size;
 	u32 rw_threshold;
 	u32 adaptive_packing;
+	u32 delayed_remap_threshold;
 	
 	//SHRD map table RB tree & list 
 	struct SHRD_MAP_HEAD rw_mapping;
@@ -219,7 +220,7 @@ struct SHRD{
 */
 	struct list_head remap_request_list;
 	struct list_head trw_request_list;
-	u32 delayed_remap_threshold; //count this with the # of twrite data, so we can delay the remap request until it is really needed
+	u32 delayed_remap_cnt; //count this with the # of twrite data, so we can delay the remap request until it is really needed
 
 	//for each index indicator for write and remap, should acquire lock to handle each entries.
 	//idx represents the index within log area, thus plz use this with SHRD_RW_LOG_START_IN_PAGE when calculate exact address.
@@ -355,7 +356,7 @@ static inline void shrd_put_subread_entry(struct SHRD *shrd, struct SHRD_SUBREAD
 	list_add_tail(&entry->subread_cmd_list, &shrd->free_subread_cmd_list);
 }
 
-u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size, u32 rw_threshold, u32 adaptive_packing);
+u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size, u32 rw_threshold, u32 adaptive_packing, u32 delayed_remap_threshold);
 struct SHRD_MAP * scsi_shrd_map_search(struct rb_root *root, u32 addr);
 int scsi_shrd_map_insert(struct SHRD_MAP_HEAD *mapping, struct SHRD_MAP *map_entry);
 void scsi_shrd_map_remove(u32 oaddr, struct SHRD_MAP_HEAD *mapping);

@@ -95,6 +95,7 @@ struct scsi_device {
 	u32 remap_size;
 	u32 rw_threshold;
 	u32 adaptive_packing;
+	u32 delayed_remap_threshold;
 
 	struct SHRD *shrd;
 #endif

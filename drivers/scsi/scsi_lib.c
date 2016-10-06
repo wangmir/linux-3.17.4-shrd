@@ -1795,7 +1795,7 @@ static void scsi_shrd_bd_init(struct request_queue *q){
 	
 }
 
-u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size, u32 rw_threshold, u32 adaptive_packing){
+u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size, u32 rw_threshold, u32 adaptive_packing, u32 delayed_remap_threshold){
 
 	struct scsi_device *sdev = q->queuedata;
 	int idx, rtn = 0;
@@ -1836,6 +1836,11 @@ u32 scsi_shrd_init(struct request_queue *q, u32 remap_threshold, u32 remap_size,
 		sdev->shrd->adaptive_packing = adaptive_packing;
 	else
 		sdev->shrd->adaptive_packing = 0;
+
+	if(delayed_remap_threshold > 0)
+		sdev->shrd->delayed_remap_threshold = delayed_remap_threshold;
+	else
+		sdev->shrd->delayed_remap_threshold = 0;
 	
 	
 	sdev->shrd->shrd_rw_map = (struct SHRD_MAP *)kmalloc(sizeof(struct SHRD_MAP) * SHRD_RW_LOG_SIZE_IN_PAGE, GFP_KERNEL);
@@ -3175,10 +3180,10 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 		return prq;
 
 //	if(1){
-	if(sdev->shrd->delayed_remap_threshold >= 5){
+	if(sdev->shrd->delayed_remap_cnt >= sdev->shrd->delayed_remap_threshold){
 		//able to send remap
 		list_for_each_entry(req, &sdev->shrd->remap_request_list, queuelist){
-			sdev->shrd->delayed_remap_threshold = 0;
+			sdev->shrd->delayed_remap_cnt = 0;
 			printk("handle remap\n");
 			return req;
 		}
@@ -3190,10 +3195,10 @@ struct request * scsi_shrd_peek_request(struct request_queue *q){
 			printk("handle tdata, bi_size: %u\n", req->bio->bi_iter.bi_size);
 		}
 		printk("handle thead or tread, bi_size: %u\n", req->bio->bi_iter.bi_size);
-		sdev->shrd->delayed_remap_threshold++;
+		sdev->shrd->delayed_remap_cnt++;
 		return req;	
 	}
-	sdev->shrd->delayed_remap_threshold++;
+	sdev->shrd->delayed_remap_cnt++;
 	return prq;	
 }
 
